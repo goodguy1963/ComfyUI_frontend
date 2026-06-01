@@ -6,6 +6,7 @@ import type { LGraphNode } from '@/lib/litegraph/src/litegraph'
 import { isComboWidget } from '@/lib/litegraph/src/litegraph'
 import type { IBaseWidget } from '@/lib/litegraph/src/types/widgets'
 import { assetService } from '@/platform/assets/services/assetService'
+import type { AssetItem } from '@/platform/assets/schemas/assetSchema'
 import { getAssetFilename } from '@/platform/assets/utils/assetMetadataUtils'
 import { createAssetWidget } from '@/platform/assets/utils/createAssetWidget'
 import { isCloud } from '@/platform/distribution/types'
@@ -124,6 +125,41 @@ function resolveCloudDefault(
   return filename || undefined
 }
 
+function getCloudInputAssets(nodeType: string | undefined): AssetItem[] {
+  const mediaType = NODE_MEDIA_TYPE_MAP[nodeType ?? '']
+  if (!mediaType) return []
+
+  return useAssetsStore().inputAssets.filter(
+    (asset) =>
+      asset.asset_hash && getMediaTypeFromFilename(asset.name) === mediaType
+  )
+}
+
+function getCloudInputAssetValue(asset: AssetItem): string | undefined {
+  return asset.asset_hash || undefined
+}
+
+function getCloudInputAssetValues(nodeType: string | undefined): string[] {
+  return getCloudInputAssets(nodeType)
+    .map(getCloudInputAssetValue)
+    .filter((value): value is string => !!value)
+}
+
+function resolveCloudInputDefault(
+  nodeType: string | undefined,
+  specDefault: string | undefined
+): string | undefined {
+  const assets = getCloudInputAssets(nodeType)
+  if (specDefault != null) {
+    const matchingAsset =
+      assets.find((asset) => asset.asset_hash === specDefault) ??
+      assets.find((asset) => asset.name === specDefault)
+    if (matchingAsset) return matchingAsset.asset_hash || undefined
+  }
+
+  return assets[0]?.asset_hash || undefined
+}
+
 function createAssetBrowserWidget(
   node: LGraphNode,
   inputSpec: ComboInputSpec,
@@ -177,14 +213,7 @@ const createInputMappingWidget = (
   }
 
   bindDynamicValuesOption(widget, () =>
-    assetsStore.inputAssets
-      .filter(
-        (asset) =>
-          getMediaTypeFromFilename(asset.name) ===
-          NODE_MEDIA_TYPE_MAP[node.comfyClass ?? '']
-      )
-      .map((asset) => asset.asset_hash)
-      .filter((hash): hash is string => !!hash)
+    getCloudInputAssetValues(node.comfyClass)
   )
 
   if (inputSpec.control_after_generate) {
@@ -226,7 +255,11 @@ const addComboWidget = (
     }
 
     if (NODE_MEDIA_TYPE_MAP[node.comfyClass ?? '']) {
-      return createInputMappingWidget(node, inputSpec, defaultValue)
+      return createInputMappingWidget(
+        node,
+        inputSpec,
+        resolveCloudInputDefault(node.comfyClass, inputSpec.default)
+      )
     }
   }
 
