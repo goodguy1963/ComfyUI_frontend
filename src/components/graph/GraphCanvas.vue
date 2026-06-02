@@ -123,6 +123,7 @@ import {
   onMounted,
   onUnmounted,
   ref,
+  shallowReactive,
   shallowRef,
   watch,
   watchEffect
@@ -145,9 +146,9 @@ import FarZoomNodeCanvas from '@/components/graph/FarZoomNodeCanvas.vue'
 import GraphCanvasMenu from '@/components/graph/GraphCanvasMenu.vue'
 import {
   getHysteresisMountedNodeIds,
-  getOrderedMountedVueNodes,
   getViewportNodeIdsWithLiteGraphFallback,
   getVueNodeViewportBounds,
+  updateMountedVueNodeRegistry,
   VUE_NODE_VIEWPORT_EXIT_OVERSCAN,
   VUE_NODE_VIEWPORT_OVERSCAN
 } from '@/components/graph/viewportMountedNodes'
@@ -357,6 +358,50 @@ const allNodes = computed((): VueNodeData[] =>
 const focusedVueNodeId = ref<string | null>(null)
 const centeredVueNodeId = ref<string | null>(null)
 const previousMountedVueNodeIds = ref<string[]>([])
+const mountedVueNodeRegistry = shallowReactive(new Map<string, VueNodeData>())
+const mountedNodes = shallowRef<VueNodeData[]>([])
+
+const areNodeIdsEqual = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((nodeId, index) => nodeId === b[index])
+
+const areNodeArraysEqual = (a: VueNodeData[], b: VueNodeData[]) =>
+  a.length === b.length &&
+  a.every((nodeData, index) => nodeData === b[index])
+
+const setPreviousMountedVueNodeIds = (nextNodeIds: string[]) => {
+  if (areNodeIdsEqual(previousMountedVueNodeIds.value, nextNodeIds)) return
+
+  previousMountedVueNodeIds.value = nextNodeIds
+}
+
+const setMountedNodes = (nextNodes: VueNodeData[]) => {
+  if (!areNodeArraysEqual(mountedNodes.value, nextNodes)) {
+    mountedNodes.value = nextNodes
+  }
+
+  setPreviousMountedVueNodeIds(nextNodes.map((node) => node.id))
+}
+
+const clearMountedVueNodeRegistry = () => {
+  if (mountedVueNodeRegistry.size) {
+    mountedVueNodeRegistry.clear()
+  }
+
+  setMountedNodes([])
+}
+
+const syncMountedVueNodeRegistry = (
+  orderedNodes: VueNodeData[],
+  mountedNodeIds: Iterable<string>
+) => {
+  setMountedNodes(
+    updateMountedVueNodeRegistry(
+      mountedVueNodeRegistry,
+      orderedNodes,
+      mountedNodeIds
+    )
+  )
+}
 
 const updateFocusedVueNodeId = () => {
   const activeNode = document.activeElement?.closest<HTMLElement>('[data-node-id]')
@@ -473,34 +518,45 @@ watch(
   { flush: 'post' }
 )
 
-const mountedNodes = computed((): VueNodeData[] => {
-  if (shouldRenderFarZoomNodeCanvas.value) {
-    previousMountedVueNodeIds.value = []
-    return []
-  }
+watch(
+  [
+    shouldRenderFarZoomNodeCanvas,
+    allNodes,
+    viewportNodeIds,
+    exitViewportNodeIds,
+    stickyVueNodeIds
+  ],
+  ([shouldRenderFarZoom, orderedNodes, visibleNodeIds, exitNodeIds, stickyNodeIds]) => {
+    if (shouldRenderFarZoom) {
+      clearMountedVueNodeRegistry()
+      return
+    }
 
-  const orderedNodes = allNodes.value
-  if (!orderedNodes.length) return orderedNodes
+    if (!orderedNodes.length) {
+      clearMountedVueNodeRegistry()
+      return
+    }
 
-  const visibleNodeIds = viewportNodeIds.value
-  if (!visibleNodeIds) {
-    previousMountedVueNodeIds.value = orderedNodes.map((node) => node.id)
-    return orderedNodes
-  }
+    if (!visibleNodeIds) {
+      syncMountedVueNodeRegistry(
+        orderedNodes,
+        orderedNodes.map((node) => node.id)
+      )
+      return
+    }
 
-  const mountedNodeIds = getHysteresisMountedNodeIds(
-    previousMountedVueNodeIds.value,
-    visibleNodeIds,
-    exitViewportNodeIds.value ?? visibleNodeIds,
-    stickyVueNodeIds.value
-  )
-  previousMountedVueNodeIds.value = mountedNodeIds
-
-  return getOrderedMountedVueNodes(
-    orderedNodes,
-    mountedNodeIds
-  )
-})
+    syncMountedVueNodeRegistry(
+      orderedNodes,
+      getHysteresisMountedNodeIds(
+        previousMountedVueNodeIds.value,
+        visibleNodeIds,
+        exitNodeIds ?? visibleNodeIds,
+        stickyNodeIds
+      )
+    )
+  },
+  { flush: 'sync', immediate: true }
+)
 
 useEventListener(document, 'focusin', updateFocusedVueNodeId, {
   capture: true

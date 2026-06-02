@@ -47,7 +47,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D2 | Fix first startup/workflow-load synchronous frontend block. | Complete | Removed duplicate bootstrap replay and chunked topology seeding. |
 | D3 | Extend transient layout buffering from Vue node drag to resize where safe. | Complete: already satisfied | Resize preview is DOM-only and commits layout once. |
 | D4 | Add DOMRect attribution after R5 to prove remaining slot/layout reads. | Complete | Added standalone attribution probe; remaining reads are low and mostly not slot-cache misses. |
-| D5 | Implement true delta-mounted node registry instead of computed list rebuild. | Pending | R4 added hysteresis only. |
+| D5 | Implement true delta-mounted node registry instead of computed list rebuild. | Complete | Replaced computed side-effect rebuild with stable shallow registry and watcher-driven deltas. |
 | D6 | Add velocity-aware viewport overscan/hysteresis tuning. | Pending | Should reduce edge pop-in without overmounting. |
 | D7 | Rewrite `useGraphNodeManager` hot load path toward patch/incremental extraction. | Pending | Large startup/load candidate. |
 | D8 | Make `useLayoutSync` dirty/flush behavior more granular. | Pending | Use R2 counters to guide this. |
@@ -484,3 +484,50 @@ Interpretation:
 - The remaining pan-time DOMRect reads are low in this sample.
 - The only slot-attributed reads were in the middle-zoom pan sample and came through resize observer slot resync, not the primary scheduled slot-cache pan path.
 - This does not justify another speculative slot rewrite yet. The next larger target remains D5: reducing mount-set/list churn with a delta-mounted registry.
+
+### D5 Delta-Mounted Vue Node Registry
+
+Changes:
+
+- Added `updateMountedVueNodeRegistry()` in `viewportMountedNodes.ts`.
+- Replaced the `GraphCanvas.vue` `mountedNodes` computed side-effect path with a stable `shallowReactive(Map)` registry plus `shallowRef` render list.
+- Mount membership still uses the existing enter/exit hysteresis logic.
+- The rendered list now updates from watcher-driven deltas instead of rebuilding and mutating `previousMountedVueNodeIds` inside a computed getter.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src\components\graph\viewportMountedNodes.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; node output_sessions\replacer_input_latency_probe.cjs > output_sessions\d5-delta-mounted-registry-replacer-probe.json`
+
+Replacer probe comparison against D2:
+
+| Metric | D2 before | D5 after |
+| --- | ---: | ---: |
+| App ready | 5690 | 4160 |
+| Workflow load | 12970 | 8270 |
+| Probe total | 23144 | 16688 |
+| Far mounted nodes | 0 | 0 |
+| Far pan | 33.0 | 64.6 |
+| Far wheel | 48.1 | 30.8 |
+| Middle mounted nodes | 76 | 66 |
+| Middle pan | 49.0 | 63.0 |
+| Middle wheel | 49.7 | 36.6 |
+| Close mounted nodes | 29 | 29 |
+| Close pan | 67.3 | 46.3 |
+| Close wheel | 45.9 | 39.2 |
+
+Mounted count details:
+
+| Scenario | Before action | After action |
+| --- | ---: | ---: |
+| Far | 0 | 0 |
+| Middle | 66 | 67 |
+| Close | 29 | 22 |
+
+Interpretation:
+
+- The registry reduces render-list identity churn and removes mutation from the computed getter.
+- Startup/load improved in this sample, likely because the mounted registry no longer over-retains as many nodes during initialization and viewport transitions.
+- Far and middle pan are worse in this single sample, while wheel and close pan improved. Treat the action-to-paint numbers as noisy until repeated samples are collected.
+- The middle mounted count dropped from `76` to `66`. That is expected for this implementation because the previous computed side effects could over-retain mounted IDs; the hysteresis behavior still applies during viewport transitions.

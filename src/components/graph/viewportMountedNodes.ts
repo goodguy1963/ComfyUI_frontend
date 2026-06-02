@@ -87,6 +87,31 @@ export function getOrderedMountedVueNodes(
   return orderedNodes.filter((nodeData) => mountedNodeIds.has(nodeData.id))
 }
 
+export function updateMountedVueNodeRegistry(
+  registry: Map<string, VueNodeData>,
+  orderedNodes: VueNodeData[],
+  mountedNodeIds: Iterable<string>
+): VueNodeData[] {
+  const nextMountedNodeIds = new Set(mountedNodeIds)
+
+  for (const nodeId of registry.keys()) {
+    if (!nextMountedNodeIds.has(nodeId)) {
+      registry.delete(nodeId)
+    }
+  }
+
+  const orderedMountedNodes: VueNodeData[] = []
+
+  for (const nodeData of orderedNodes) {
+    if (!nextMountedNodeIds.has(nodeData.id)) continue
+
+    registry.set(nodeData.id, nodeData)
+    orderedMountedNodes.push(nodeData)
+  }
+
+  return orderedMountedNodes
+}
+
 export function getHysteresisMountedNodeIds(
   previousMountedNodeIds: Iterable<string>,
   enterNodeIds: Iterable<string>,

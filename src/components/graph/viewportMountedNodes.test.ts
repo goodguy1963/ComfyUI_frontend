@@ -6,7 +6,8 @@ import {
   getHysteresisMountedNodeIds,
   getOrderedMountedVueNodes,
   getViewportNodeIdsWithLiteGraphFallback,
-  getVueNodeViewportBounds
+  getVueNodeViewportBounds,
+  updateMountedVueNodeRegistry
 } from './viewportMountedNodes'
 
 function createNode(id: string): VueNodeData {
@@ -116,6 +117,41 @@ describe('getVueNodeViewportBounds', () => {
       spatialQueryBounds: viewportBounds,
       fallbackBounds: viewportBounds
     })
+  })
+})
+
+describe('updateMountedVueNodeRegistry', () => {
+  it('applies enter and leave deltas while preserving render order', () => {
+    const registry = new Map<string, VueNodeData>([
+      ['old-node', createNode('old-node')],
+      ['node-b', createNode('stale-node-b')]
+    ])
+    const orderedNodes = [
+      createNode('node-a'),
+      createNode('node-b'),
+      createNode('node-c')
+    ]
+
+    const mountedNodes = updateMountedVueNodeRegistry(registry, orderedNodes, [
+      'node-c',
+      'node-a'
+    ])
+
+    expect(mountedNodes.map((node) => node.id)).toEqual(['node-a', 'node-c'])
+    expect([...registry.keys()]).toEqual(['node-a', 'node-c'])
+  })
+
+  it('updates existing entries when node data objects are replaced', () => {
+    const previousNode = createNode('node-a')
+    const nextNode = createNode('node-a')
+    const registry = new Map<string, VueNodeData>([['node-a', previousNode]])
+
+    const mountedNodes = updateMountedVueNodeRegistry(registry, [nextNode], [
+      'node-a'
+    ])
+
+    expect(mountedNodes).toEqual([nextNode])
+    expect(registry.get('node-a')).toBe(nextNode)
   })
 })
 
