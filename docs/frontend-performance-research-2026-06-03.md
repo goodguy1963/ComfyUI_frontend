@@ -46,7 +46,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D1 | Add stronger visual assertions for low-detail and far-zoom node rendering. | Complete | Added canvas draw assertions and low-detail strip assertions. |
 | D2 | Fix first startup/workflow-load synchronous frontend block. | Complete | Removed duplicate bootstrap replay and chunked topology seeding. |
 | D3 | Extend transient layout buffering from Vue node drag to resize where safe. | Complete: already satisfied | Resize preview is DOM-only and commits layout once. |
-| D4 | Add DOMRect attribution after R5 to prove remaining slot/layout reads. | Pending | Needed before claiming slot geometry is fully pan-free. |
+| D4 | Add DOMRect attribution after R5 to prove remaining slot/layout reads. | Complete | Added standalone attribution probe; remaining reads are low and mostly not slot-cache misses. |
 | D5 | Implement true delta-mounted node registry instead of computed list rebuild. | Pending | R4 added hysteresis only. |
 | D6 | Add velocity-aware viewport overscan/hysteresis tuning. | Pending | Should reduce edge pop-in without overmounting. |
 | D7 | Rewrite `useGraphNodeManager` hot load path toward patch/incremental extraction. | Pending | Large startup/load candidate. |
@@ -445,3 +445,42 @@ Reason:
 Tests:
 
 - `node node_modules\vitest\vitest.mjs run src/renderer/extensions/vueNodes/interactions/resize/useNodeResize.test.ts src/renderer/extensions/vueNodes/components/LGraphNode.test.ts`
+
+### D4 DOMRect Attribution Probe
+
+Change:
+
+- Added `scripts/replacer-domrect-attribution.cjs`.
+- The script directly loads the Replacer workflow against the running frontend and patches `Element.prototype.getBoundingClientRect` in-page.
+- It avoids the repo Playwright global setup, so it does not touch the live `ComfyUI/user` directory while the `8190` backend is running.
+
+Command:
+
+```powershell
+$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'
+$env:REPLACER_DOMRECT_ATTRIBUTION_OUT='output_sessions\d4-domrect-attribution.json'
+node scripts\replacer-domrect-attribution.cjs
+```
+
+Result:
+
+| Scenario | Mounted before | DOMRect calls | Top attribution |
+| --- | ---: | ---: | --- |
+| Far pan | 0 | 7 | `#graph-canvas`; VueUse element bounds and one LiteGraph pointer-event rect cache read. |
+| Middle pan | 76 | 10 | `#graph-canvas` plus 2 slot reads and 1 node read from `useVueNodeResizeTracking -> syncNodeSlotLayoutsFromDOM`. |
+| Close pan | 29 | 7 | `#graph-canvas`; VueUse element bounds and one LiteGraph pointer-event rect cache read. |
+
+Load context:
+
+| Mark | Time |
+| --- | ---: |
+| App ready | 4537 ms |
+| Workflow load | 10115 ms |
+| Total probe | 19504 ms |
+
+Interpretation:
+
+- R5 mostly achieved the intended pan-free slot geometry behavior.
+- The remaining pan-time DOMRect reads are low in this sample.
+- The only slot-attributed reads were in the middle-zoom pan sample and came through resize observer slot resync, not the primary scheduled slot-cache pan path.
+- This does not justify another speculative slot rewrite yet. The next larger target remains D5: reducing mount-set/list churn with a delta-mounted registry.
