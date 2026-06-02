@@ -268,4 +268,25 @@ describe('useLayoutSync', () => {
 
     unmount()
   })
+
+  it('skips writeback for canvas-originated layout changes', () => {
+    const canvas = {
+      graph: {
+        getNodeById: vi.fn()
+      },
+      setDirty: vi.fn()
+    }
+
+    const { unmount } = render(LayoutSyncHarness)
+
+    syncApi.startSync(canvas as never)
+    testState.listener?.({ nodeIds: ['1'], source: LayoutSource.Canvas })
+
+    expect(testState.rafCallback).toBeNull()
+    expect(testState.microtaskCallback).toBeNull()
+    expect(canvas.graph.getNodeById).not.toHaveBeenCalled()
+    expect(canvas.setDirty).not.toHaveBeenCalled()
+
+    unmount()
+  })
 })

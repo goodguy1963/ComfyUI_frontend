@@ -50,7 +50,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D5 | Implement true delta-mounted node registry instead of computed list rebuild. | Complete | Replaced computed side-effect rebuild with stable shallow registry and watcher-driven deltas. |
 | D6 | Add velocity-aware viewport overscan/hysteresis tuning. | Complete | Enter overscan now expands with canvas transform velocity and keeps exit overscan stable. |
 | D7 | Rewrite `useGraphNodeManager` hot load path toward patch/incremental extraction. | Complete | Removed slot-label full widget re-extraction; remaining full extraction work needs deeper load instrumentation. |
-| D8 | Make `useLayoutSync` dirty/flush behavior more granular. | Pending | Use R2 counters to guide this. |
+| D8 | Make `useLayoutSync` dirty/flush behavior more granular. | Complete | Canvas-originated layout changes now skip LiteGraph writeback scheduling. |
 | D9 | Profile and implement next confirmed link drawing optimization. | Pending | No speculative link work without a profile. |
 | D10 | Move minimap model toward event-driven updates. | Pending | Earlier pan skip helped; full event model remains. |
 | D11 | Add widget intrinsic sizing/cache API. | Pending | Correctness plus layout churn reduction. |
@@ -622,3 +622,41 @@ Interpretation:
 - It removes a defensible source of avoidable re-extraction during slot-label changes.
 - The Replacer sample is mixed: far/middle pan improved, close pan worsened, startup/load worsened versus the unusually fast D6 sample.
 - The next deeper `useGraphNodeManager` load work should be preceded by extraction-count/load-phase instrumentation, otherwise the branch risks speculative churn.
+
+### D8 Canvas-Source Layout Sync Skip
+
+Changes:
+
+- `useLayoutSync()` now skips node writeback scheduling for `LayoutSource.Canvas` changes.
+- Canvas-source changes already came from LiteGraph, so syncing them back only repeats graph lookups and dirty checks.
+- Added `syncSkippedCanvasSource` to the layout performance counters.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src\renderer\core\layout\sync\useLayoutSync.test.ts src\renderer\core\layout\performance\layoutPerfInstrumentation.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; node output_sessions\replacer_input_latency_probe.cjs > output_sessions\d8-canvas-source-sync-skip-replacer-probe.json`
+
+Replacer probe comparison against D7:
+
+| Metric | D7 before | D8 after |
+| --- | ---: | ---: |
+| App ready | 4958 | 5298 |
+| Workflow load | 8518 | 8527 |
+| Probe total | 17588 | 17893 |
+| Far mounted nodes | 0 | 0 |
+| Far pan | 29.0 | 37.3 |
+| Far wheel | 30.4 | 40.2 |
+| Middle mounted nodes | 73 | 73 |
+| Middle pan | 52.1 | 41.2 |
+| Middle wheel | 37.5 | 39.2 |
+| Close mounted nodes | 29 | 29 |
+| Close pan | 48.1 | 31.5 |
+| Close wheel | 43.4 | 41.1 |
+
+Interpretation:
+
+- This is a source-aware correctness/performance cleanup for the sync loop.
+- Startup/load stayed effectively unchanged.
+- Middle and close pan improved in this sample; far pan and far wheel worsened.
+- The next step should use attribution again before making more link/minimap changes.

@@ -12,6 +12,7 @@ export type LayoutPerfCounterName =
   | 'syncDirtyForeground'
   | 'syncDirtyBackground'
   | 'syncDirtyBoth'
+  | 'syncSkippedCanvasSource'
 
 export type LayoutPerfCounters = Record<LayoutPerfCounterName, number>
 
@@ -41,7 +42,8 @@ const COUNTER_NAMES: LayoutPerfCounterName[] = [
   'syncFlushedNodeIds',
   'syncDirtyForeground',
   'syncDirtyBackground',
-  'syncDirtyBoth'
+  'syncDirtyBoth',
+  'syncSkippedCanvasSource'
 ]
 
 const GLOBAL_STATE_KEY = '__COMFY_LAYOUT_PERF_STATE__'

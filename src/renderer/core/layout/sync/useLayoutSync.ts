@@ -129,6 +129,13 @@ export function useLayoutSync() {
       // Topology-only changes (links, reroutes) don't need LiteGraph
       // node writeback — link rendering reads from the store directly.
       if (change.nodeIds.length === 0) return
+      // Canvas-originated layout changes already updated LiteGraph. Writing
+      // them back through the sync loop only repeats graph lookups and dirty
+      // checks on the interaction path.
+      if (change.source === LayoutSource.Canvas) {
+        recordLayoutPerfCounter('syncSkippedCanvasSource')
+        return
+      }
 
       for (const nodeId of change.nodeIds) {
         pendingNodeIds.add(nodeId)
