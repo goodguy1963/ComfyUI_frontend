@@ -32,7 +32,7 @@ Date note: the local execution environment reported `2026-06-02`; the user reque
 | R2 | Add drag/pan fast-path instrumentation for Yjs transaction and layout sync rates before changing behavior. | Complete | Unit tests, typecheck, browser API smoke. |
 | R3 | Implement interaction fast-path or transient layout buffering for Vue node drag. | Complete | Layout store tests, drag tests, Replacer pan probe. |
 | R4 | Implement viewport mount-set hysteresis. | Complete | `viewportMountedNodes` tests, typecheck, Replacer probe. |
-| R5 | Make slot geometry fully pan-free where safe. | Pending | Slot tracking tests, DOMRect attribution probe. |
+| R5 | Make slot geometry pan-free for active canvas pan where cached offsets exist. | Complete | Slot tracking tests, typecheck, Replacer probe. |
 | R6 | Continue link/minimap phase separation only after profiling confirms the next hotspot. | Pending | CPU profile/probe comparison, minimap tests. |
 | R7 | Investigate startup/workflow-load regression against `main`. | Pending | App-ready/workflow-load probe, focused startup instrumentation. |
 | R8 | Produce final research report with `main` vs `research-start` vs `research-final`. | Pending | Full test summary and benchmark summary. |
@@ -210,3 +210,40 @@ Interpretation:
 - Hysteresis intentionally retains more mounted nodes at middle/close zoom (`66 -> 76`, `20 -> 29` in this local sequence).
 - The single-sample pan result improved strongly at middle/close zoom, likely because fewer mount/unmount edges occur during movement.
 - This needs repeated samples before claiming a stable win.
+
+### R5 Slot Cache During Active Canvas Pan
+
+Changes:
+
+- Extended slot DOM-measurement deferral from pure middle-button pan to any active canvas pan state where `canvas.dragging_canvas && canvas.pointer.isDown`.
+- If usable cached slot offsets exist, slot layouts update from node layout position without DOMRect reads.
+- Dirty DOM measurement is deferred until after pan release.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src/renderer/extensions/vueNodes/composables/useSlotElementTracking.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `node output_sessions\replacer_input_latency_probe.cjs > output_sessions\r5-slot-pan-cache-replacer-probe.json`
+
+Probe result:
+
+| Replacer probe after R5 | Value |
+| --- | ---: |
+| App ready | 5680 ms |
+| Workflow load | 19035 ms |
+| Total | 28744 ms |
+| Far mounted nodes | 0 |
+| Far pan | 35.4 ms |
+| Far wheel | 29.8 ms |
+| Middle mounted nodes | 76 |
+| Middle pan | 45.5 ms |
+| Middle wheel | 44.7 ms |
+| Close mounted nodes | 29 |
+| Close pan | 27.6 ms |
+| Close wheel | 43.7 ms |
+
+Interpretation:
+
+- Mounted node counts stayed the same as R4.
+- Middle/close pan stayed in the improved range in this single sample.
+- A DOMRect attribution run is still needed before claiming DOM reads are fully eliminated during all pan cases.

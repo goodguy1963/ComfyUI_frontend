@@ -30,12 +30,21 @@ const mockGraph = vi.hoisted(() => ({ _nodes: [] as unknown[] }))
 const mockCanvasState = vi.hoisted(() => ({
   canvas: {} as object | null
 }))
+const mockAppCanvasState = vi.hoisted(() => ({
+  pointer: {
+    isDown: false,
+    eDown: { button: 0 }
+  },
+  dragging_canvas: false,
+  graph: mockGraph,
+  setDirty: vi.fn()
+}))
 const mockClientPosToCanvasPos = vi.hoisted(() =>
   vi.fn(([x, y]: [number, number]) => [x * 0.5, y * 0.5] as [number, number])
 )
 
 vi.mock('@/scripts/app', () => ({
-  app: { canvas: { graph: mockGraph, setDirty: vi.fn() } }
+  app: { canvas: mockAppCanvasState }
 }))
 
 vi.mock('@/renderer/core/canvas/canvasStore', () => ({
@@ -157,6 +166,11 @@ describe('useSlotElementTracking', () => {
     seedNodeLayout(NODE_ID)
     mockGraph._nodes = [{ id: 1 }]
     mockCanvasState.canvas = {}
+    mockAppCanvasState.pointer.isDown = false
+    mockAppCanvasState.pointer.eDown = { button: 0 }
+    mockAppCanvasState.dragging_canvas = false
+    mockAppCanvasState.setDirty.mockClear()
+    LiteGraph.vueNodesMode = true
     mockClientPosToCanvasPos.mockClear()
   })
 
@@ -371,6 +385,31 @@ describe('useSlotElementTracking', () => {
     expect(cleanMeasured.nodeRectSpy).not.toHaveBeenCalled()
     expect(dirtyMeasured.slotRectSpy).toHaveBeenCalledOnce()
     expect(dirtyMeasured.nodeRectSpy).toHaveBeenCalledOnce()
+  })
+
+  it('uses cached slot offsets instead of DOM reads during active canvas pan', () => {
+    const slotKey = getSlotKey(NODE_ID, SLOT_INDEX, true)
+    const measured = createMeasuredSlotElement(NODE_ID)
+
+    const registryStore = useNodeSlotRegistryStore()
+    registryStore.ensureNode(NODE_ID).slots.set(slotKey, {
+      el: measured.el,
+      index: SLOT_INDEX,
+      type: 'input',
+      cachedOffset: { x: 50, y: 60 }
+    })
+
+    mockAppCanvasState.pointer.isDown = true
+    mockAppCanvasState.dragging_canvas = true
+    scheduleSlotLayoutSync(NODE_ID)
+    flushScheduledSlotLayoutSync()
+
+    expect(measured.slotRectSpy).not.toHaveBeenCalled()
+    expect(measured.nodeRectSpy).not.toHaveBeenCalled()
+    expect(layoutStore.getSlotLayout(slotKey)?.position).toEqual({
+      x: 50,
+      y: 60
+    })
   })
 
   describe('collapsed node slot sync', () => {

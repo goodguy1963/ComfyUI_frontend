@@ -33,12 +33,12 @@ const raf = createRafBatch(() => {
   flushScheduledSlotLayoutSync()
 })
 
-function isPureMiddleCanvasPanActive(): boolean {
+function isCanvasPanActive(): boolean {
   const canvas = app.canvas
   return Boolean(
     LiteGraph.vueNodesMode &&
       canvas?.pointer.isDown &&
-      canvas.pointer.eDown?.button === 1
+      (canvas.dragging_canvas || canvas.pointer.eDown?.button === 1)
   )
 }
 
@@ -202,7 +202,7 @@ export function flushScheduledSlotLayoutSync() {
     dirtyNodes.delete(nodeId)
 
     if (shouldMeasureFromDOM) {
-      if (isPureMiddleCanvasPanActive()) {
+      if (isCanvasPanActive()) {
         if (nodeHasUsableSlotOffsetCache(nodeId)) {
           updateNodeSlotsFromCache(nodeId)
         }
