@@ -15,7 +15,20 @@ const props = defineProps<{
   widget: SimplifiedWidget<number>
 }>()
 
-const modelValue = defineModel<number>({ default: 0 })
+const modelValue = defineModel<number | string>({ default: 0 })
+
+const numericModelValue = computed({
+  get: () => {
+    const value = modelValue.value
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+
+    const numericValue = Number(value)
+    return Number.isFinite(numericValue) ? numericValue : 0
+  },
+  set: (value: number) => {
+    modelValue.value = value
+  }
+})
 
 const controlWidget = computed<SimplifiedControlWidget<number> | null>(() =>
   props.widget.controlWidget
@@ -38,14 +51,14 @@ const widgetComponent = computed(() => {
 <template>
   <WidgetWithControl
     v-if="controlWidget"
-    v-model="modelValue"
+    v-model="numericModelValue"
     :widget="controlWidget"
     :component="widgetComponent"
   />
   <component
     :is="widgetComponent"
     v-else
-    v-model="modelValue"
+    v-model="numericModelValue"
     :widget="widget"
     v-bind="$attrs"
   />
