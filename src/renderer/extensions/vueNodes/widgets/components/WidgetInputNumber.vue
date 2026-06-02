@@ -15,12 +15,13 @@ const props = defineProps<{
   widget: SimplifiedWidget<number>
 }>()
 
-const modelValue = defineModel<number | string>({ default: 0 })
+const modelValue = defineModel<number | string | boolean>({ default: 0 })
 
 const numericModelValue = computed({
   get: () => {
     const value = modelValue.value
     if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'boolean') return value ? 1 : 0
 
     const numericValue = Number(value)
     return Number.isFinite(numericValue) ? numericValue : 0
