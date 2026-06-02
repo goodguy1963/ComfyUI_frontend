@@ -51,6 +51,15 @@ function useNodeDragIndividual() {
   let lastPointerX = 0
   let lastPointerY = 0
 
+  function schedulePositionUpdate(nodeId: NodeId) {
+    if (rafId !== null) return
+
+    rafId = requestAnimationFrame(() => {
+      rafId = null
+      updateNodePositions(nodeId)
+    })
+  }
+
   function startDrag(event: PointerEvent, nodeId: NodeId) {
     const layout = toValue(layoutStore.getNodeLayoutRef(nodeId))
     if (!layout) return
@@ -121,7 +130,7 @@ function useNodeDragIndividual() {
               group.move(panX, panY, true)
             }
           }
-          updateNodePositions(nodeId)
+          schedulePositionUpdate(nodeId)
         }
       })
       autoPan.updatePointer(event.clientX, event.clientY)
@@ -208,10 +217,7 @@ function useNodeDragIndividual() {
     lastPointerY = event.clientY
     autoPan?.updatePointer(event.clientX, event.clientY)
 
-    rafId = requestAnimationFrame(() => {
-      rafId = null
-      updateNodePositions(nodeId)
-    })
+    schedulePositionUpdate(nodeId)
   }
 
   function endDrag(event: PointerEvent, nodeId: NodeId | undefined) {

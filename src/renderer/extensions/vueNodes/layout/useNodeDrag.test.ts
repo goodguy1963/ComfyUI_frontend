@@ -286,6 +286,7 @@ describe('useNodeDrag auto-pan', () => {
 
     testState.mockDs.offset[0] -= 5
     testState.capturedOnPan.current!(5, 0)
+    testState.requestAnimationFrameCallback?.(0)
 
     expect(testState.mutationFns.batchMoveNodes).toHaveBeenCalledWith([
       { nodeId: '1', position: { x: 115, y: 200 } }
@@ -301,12 +302,29 @@ describe('useNodeDrag auto-pan', () => {
 
     testState.mockDs.offset[0] -= 5
     testState.capturedOnPan.current!(5, 0)
+    testState.requestAnimationFrameCallback?.(0)
 
     expect(testState.mutationFns.batchMoveNodes).toHaveBeenCalledTimes(1)
     const calls = testState.mutationFns.batchMoveNodes.mock.calls[0][0]
     const nodeIds = calls.map((u: { nodeId: string }) => u.nodeId)
     expect(nodeIds).toContain('1')
     expect(nodeIds).toContain('2')
+  })
+
+  it('coalesces pending pointermove and auto-pan into one batch update', () => {
+    const drag = useNodeDrag()
+
+    drag.startDrag(pointerEvent(750, 300), '1')
+    drag.handleDrag(pointerEvent(760, 300), '1')
+
+    testState.mockDs.offset[0] -= 5
+    testState.capturedOnPan.current!(5, 0)
+    testState.requestAnimationFrameCallback?.(0)
+
+    expect(testState.mutationFns.batchMoveNodes).toHaveBeenCalledTimes(1)
+    expect(testState.mutationFns.batchMoveNodes).toHaveBeenCalledWith([
+      { nodeId: '1', position: { x: 115, y: 200 } }
+    ])
   })
 
   it('updates auto-pan pointer on handleDrag', () => {

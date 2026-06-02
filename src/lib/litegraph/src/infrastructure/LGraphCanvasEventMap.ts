@@ -59,4 +59,9 @@ export interface LGraphCanvasEventMap {
     active: boolean
     nodeId: NodeId
   }
+
+  /** The viewport was programmatically centered on a node. */
+  'litegraph:center-on-node': {
+    nodeId: NodeId
+  }
 }

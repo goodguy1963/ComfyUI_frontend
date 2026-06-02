@@ -434,18 +434,42 @@ function createVirtualCanvasImagePreviewWidget(): IBaseWidget {
   }
 }
 
-export function getPromotableWidgets(node: LGraphNode): IBaseWidget[] {
-  const widgets = [...(node.widgets ?? [])]
+function tryGetPromotableWidgets(
+  node: LGraphNode,
+  options: { refreshComputedDisabled?: boolean } = {}
+): { ok: boolean; widgets: IBaseWidget[] } {
+  try {
+    if (options.refreshComputedDisabled) {
+      node.updateComputedDisabled()
+    }
 
-  const hasCanvasPreviewWidget = widgets.some(
-    (widget) => widget.name === CANVAS_IMAGE_PREVIEW_WIDGET
-  )
-  const supportsVirtualPreview = supportsVirtualPreviewWidget(node)
-  if (!hasCanvasPreviewWidget && supportsVirtualPreview) {
-    widgets.push(createVirtualCanvasImagePreviewWidget())
+    const widgets = [...(node.widgets ?? [])]
+    const hasCanvasPreviewWidget = widgets.some(
+      (widget) => widget.name === CANVAS_IMAGE_PREVIEW_WIDGET
+    )
+    const supportsVirtualPreview = supportsVirtualPreviewWidget(node)
+    if (!hasCanvasPreviewWidget && supportsVirtualPreview) {
+      widgets.push(createVirtualCanvasImagePreviewWidget())
+    }
+
+    return { ok: true, widgets }
+  } catch (error) {
+    Sentry.addBreadcrumb({
+      category: 'subgraph',
+      level: 'warning',
+      message: `Skipped promotable widget scan for malformed node ${node.id}`,
+      data: {
+        nodeId: node.id,
+        nodeType: node.type,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    })
+    return { ok: false, widgets: [] }
   }
+}
 
-  return widgets
+export function getPromotableWidgets(node: LGraphNode): IBaseWidget[] {
+  return tryGetPromotableWidgets(node).widgets
 }
 
 function nodeWidgets(n: LGraphNode): WidgetItem[] {
@@ -457,26 +481,29 @@ export function autoExposeKnownPreviewNodes(subgraphNode: SubgraphNode): void {
   const { updatePreviews } = useLitegraphService()
   const interiorNodes = subgraphNode.subgraph.nodes
   for (const node of interiorNodes) {
-    node.updateComputedDisabled()
+    const initialWidgets = tryGetPromotableWidgets(node, {
+      refreshComputedDisabled: true
+    })
+    if (!initialWidgets.ok) continue
 
-    const hasPreviewWidget = () =>
-      node.widgets?.some(isPreviewPseudoWidget) ?? false
-
-    function promotePreviewWidget() {
-      const widget = node.widgets?.find(isPreviewPseudoWidget)
-      if (!widget) return
-      promotePreviewViaExposure(subgraphNode, node, widget.name)
-    }
-    promotePreviewWidget()
-
-    if (hasPreviewWidget()) continue
-
-    if (supportsVirtualCanvasImagePreview(node)) {
-      promotePreviewViaExposure(subgraphNode, node, CANVAS_IMAGE_PREVIEW_WIDGET)
+    const initialPreviewWidget = initialWidgets.widgets.find(
+      isPreviewPseudoWidget
+    )
+    if (initialPreviewWidget) {
+      promotePreviewViaExposure(subgraphNode, node, initialPreviewWidget.name)
       continue
     }
 
-    requestAnimationFrame(() => updatePreviews(node, promotePreviewWidget))
+    requestAnimationFrame(() =>
+      updatePreviews(node, () => {
+        const widgets = tryGetPromotableWidgets(node)
+        if (!widgets.ok) return
+
+        const previewWidget = widgets.widgets.find(isPreviewPseudoWidget)
+        if (!previewWidget) return
+        promotePreviewViaExposure(subgraphNode, node, previewWidget.name)
+      })
+    )
   }
 }
 

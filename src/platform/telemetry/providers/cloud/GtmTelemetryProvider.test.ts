@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GtmTelemetryProvider } from './GtmTelemetryProvider'
 
@@ -18,6 +18,52 @@ describe('GtmTelemetryProvider', () => {
     window.dataLayer = undefined
     window.gtag = undefined
     document.head.innerHTML = ''
+
+    const insertedScripts: HTMLScriptElement[] = []
+    const originalInsertBefore = document.head.insertBefore.bind(document.head)
+    const originalQuerySelector = document.querySelector.bind(document)
+    const originalQuerySelectorAll = document.querySelectorAll.bind(document)
+    const findInsertedScripts = (selector: string) => {
+      const match = selector.match(/^script\[src="(.+)"\]$/)
+      if (!match) {
+        return null
+      }
+
+      return insertedScripts.filter((script) => script.src === match[1])
+    }
+
+    vi.spyOn(document.head, 'insertBefore').mockImplementation((node, child) => {
+      if (node instanceof HTMLScriptElement) {
+        insertedScripts.unshift(node)
+        return node
+      }
+
+      return originalInsertBefore(node, child)
+    })
+
+    vi.spyOn(document, 'querySelector').mockImplementation((selector) => {
+      const scripts = findInsertedScripts(selector)
+
+      if (scripts) {
+        return (scripts[0] ?? null) as Element | null
+      }
+
+      return originalQuerySelector(selector)
+    })
+
+    vi.spyOn(document, 'querySelectorAll').mockImplementation((selector) => {
+      const scripts = findInsertedScripts(selector)
+
+      if (scripts) {
+        return scripts as unknown as NodeListOf<Element>
+      }
+
+      return originalQuerySelectorAll(selector)
+    })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   it('injects the GTM runtime script', () => {

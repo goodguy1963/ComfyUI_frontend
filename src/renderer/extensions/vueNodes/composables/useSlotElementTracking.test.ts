@@ -4,6 +4,13 @@ import { setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { defineComponent, nextTick, ref } from 'vue'
 
+vi.mock('@vueuse/core', async () => {
+  const { ref } = await import('vue')
+  return {
+    useDocumentVisibility: () => ref<'visible' | 'hidden'>('visible')
+  }
+})
+
 import { LiteGraph } from '@/lib/litegraph/src/litegraph'
 import { getSlotKey } from '@/renderer/core/layout/slots/slotIdentifier'
 import { layoutStore } from '@/renderer/core/layout/store/layoutStore'
@@ -12,6 +19,7 @@ import type { SlotLayout } from '@/renderer/core/layout/types'
 import { useNodeSlotRegistryStore } from '@/renderer/extensions/vueNodes/stores/nodeSlotRegistryStore'
 
 import {
+  scheduleSlotLayoutSync,
   syncNodeSlotLayoutsFromDOM,
   flushScheduledSlotLayoutSync,
   requestSlotLayoutSyncForAllNodes,
@@ -43,6 +51,25 @@ vi.mock('@/composables/element/useCanvasPositionConversion', () => ({
 const NODE_ID = 'test-node'
 const SLOT_INDEX = 0
 
+function seedNodeLayout(nodeId: string) {
+  layoutStore.applyOperation({
+    type: 'createNode',
+    entity: 'node',
+    nodeId,
+    layout: {
+      id: nodeId,
+      position: { x: 0, y: 0 },
+      size: { width: 200, height: 100 },
+      zIndex: 0,
+      visible: true,
+      bounds: { x: 0, y: 0, width: 200, height: 100 }
+    },
+    timestamp: Date.now(),
+    source: LayoutSource.External,
+    actor: 'test'
+  })
+}
+
 function createTestSetup(type: 'input' | 'output') {
   const el = ref<HTMLElement | null>(null)
   const TestComponent = defineComponent({
@@ -60,11 +87,19 @@ function createTestSetup(type: 'input' | 'output') {
   return { el, TestComponent }
 }
 
-function createSlotElement(collapsed = false): HTMLElement {
+function createMeasuredSlotElement(
+  nodeId = NODE_ID,
+  collapsed = false
+): {
+  container: HTMLElement
+  el: HTMLElement
+  nodeRectSpy: ReturnType<typeof vi.fn>
+  slotRectSpy: ReturnType<typeof vi.fn>
+} {
   const container = document.createElement('div')
-  container.dataset.nodeId = NODE_ID
+  container.dataset.nodeId = nodeId
   if (collapsed) container.dataset.collapsed = ''
-  container.getBoundingClientRect = () =>
+  const nodeRectSpy = vi.fn(() =>
     ({
       left: 0,
       top: 0,
@@ -75,11 +110,12 @@ function createSlotElement(collapsed = false): HTMLElement {
       x: 0,
       y: 0,
       toJSON: () => ({})
-    }) as DOMRect
+    }) as DOMRect)
+  container.getBoundingClientRect = nodeRectSpy as typeof container.getBoundingClientRect
   document.body.appendChild(container)
 
   const el = document.createElement('div')
-  el.getBoundingClientRect = () =>
+  const slotRectSpy = vi.fn(() =>
     ({
       left: 10,
       top: 30,
@@ -90,10 +126,15 @@ function createSlotElement(collapsed = false): HTMLElement {
       x: 10,
       y: 30,
       toJSON: () => ({})
-    }) as DOMRect
+    }) as DOMRect)
+  el.getBoundingClientRect = slotRectSpy as typeof el.getBoundingClientRect
   container.appendChild(el)
 
-  return el
+  return { container, el, nodeRectSpy, slotRectSpy }
+}
+
+function createSlotElement(collapsed = false, nodeId = NODE_ID): HTMLElement {
+  return createMeasuredSlotElement(nodeId, collapsed).el
 }
 
 /**
@@ -113,22 +154,7 @@ describe('useSlotElementTracking', () => {
     setActivePinia(createTestingPinia({ stubActions: false }))
     document.body.innerHTML = ''
     layoutStore.initializeFromLiteGraph([])
-    layoutStore.applyOperation({
-      type: 'createNode',
-      entity: 'node',
-      nodeId: NODE_ID,
-      layout: {
-        id: NODE_ID,
-        position: { x: 0, y: 0 },
-        size: { width: 200, height: 100 },
-        zIndex: 0,
-        visible: true,
-        bounds: { x: 0, y: 0, width: 200, height: 100 }
-      },
-      timestamp: Date.now(),
-      source: LayoutSource.External,
-      actor: 'test'
-    })
+    seedNodeLayout(NODE_ID)
     mockGraph._nodes = [{ id: 1 }]
     mockCanvasState.canvas = {}
     mockClientPosToCanvasPos.mockClear()
@@ -147,7 +173,7 @@ describe('useSlotElementTracking', () => {
 
     unmount()
 
-    expect(layoutStore.getSlotLayout(slotKey)).toBeNull()
+    expect(layoutStore.getSlotLayout(slotKey)).not.toBeNull()
     expect(registryStore.getNode(NODE_ID)).toBeUndefined()
   })
 
@@ -221,12 +247,14 @@ describe('useSlotElementTracking', () => {
     node.slots.set(slotKey, {
       el: hiddenSlot,
       index: SLOT_INDEX,
-      type: 'input'
+      type: 'input',
+      cachedOffset: { x: 15, y: 5 }
     })
 
     syncNodeSlotLayoutsFromDOM(NODE_ID)
 
     expect(layoutStore.getSlotLayout(slotKey)).toBeNull()
+    expect(node.slots.get(slotKey)?.cachedOffset).toBeUndefined()
   })
 
   it('skips slot layout writeback when measured slot geometry is unchanged', () => {
@@ -269,6 +297,80 @@ describe('useSlotElementTracking', () => {
     syncNodeSlotLayoutsFromDOM(NODE_ID)
 
     expect(batchUpdateSpy).not.toHaveBeenCalled()
+  })
+
+  it('measures only dirty nodes during request-all syncs', () => {
+    const cleanNodeId = 'clean-node'
+    const dirtyNodeId = 'dirty-node'
+    seedNodeLayout(cleanNodeId)
+    seedNodeLayout(dirtyNodeId)
+
+    const cleanSlotKey = getSlotKey(cleanNodeId, SLOT_INDEX, true)
+    const dirtySlotKey = getSlotKey(dirtyNodeId, SLOT_INDEX, true)
+    const cleanMeasured = createMeasuredSlotElement(cleanNodeId)
+    const dirtyMeasured = createMeasuredSlotElement(dirtyNodeId)
+
+    const expectedX = 15
+    const expectedY = 35 - LiteGraph.NODE_TITLE_HEIGHT
+    const slotSize = LiteGraph.NODE_SLOT_HEIGHT
+    const halfSlotSize = slotSize / 2
+
+    const registryStore = useNodeSlotRegistryStore()
+    registryStore.ensureNode(cleanNodeId).slots.set(cleanSlotKey, {
+      el: cleanMeasured.el,
+      index: SLOT_INDEX,
+      type: 'input',
+      cachedOffset: { x: expectedX, y: expectedY }
+    })
+    registryStore.ensureNode(dirtyNodeId).slots.set(dirtySlotKey, {
+      el: dirtyMeasured.el,
+      index: SLOT_INDEX,
+      type: 'input',
+      cachedOffset: { x: expectedX, y: expectedY }
+    })
+
+    const initialLayouts: Array<{ key: string; layout: SlotLayout }> = [
+      {
+        key: cleanSlotKey,
+        layout: {
+          nodeId: cleanNodeId,
+          index: SLOT_INDEX,
+          type: 'input',
+          position: { x: expectedX, y: expectedY },
+          bounds: {
+            x: expectedX - halfSlotSize,
+            y: expectedY - halfSlotSize,
+            width: slotSize,
+            height: slotSize
+          }
+        }
+      },
+      {
+        key: dirtySlotKey,
+        layout: {
+          nodeId: dirtyNodeId,
+          index: SLOT_INDEX,
+          type: 'input',
+          position: { x: expectedX, y: expectedY },
+          bounds: {
+            x: expectedX - halfSlotSize,
+            y: expectedY - halfSlotSize,
+            width: slotSize,
+            height: slotSize
+          }
+        }
+      }
+    ]
+    layoutStore.batchUpdateSlotLayouts(initialLayouts)
+
+    scheduleSlotLayoutSync(dirtyNodeId)
+    requestSlotLayoutSyncForAllNodes()
+    flushScheduledSlotLayoutSync()
+
+    expect(cleanMeasured.slotRectSpy).not.toHaveBeenCalled()
+    expect(cleanMeasured.nodeRectSpy).not.toHaveBeenCalled()
+    expect(dirtyMeasured.slotRectSpy).toHaveBeenCalledOnce()
+    expect(dirtyMeasured.nodeRectSpy).toHaveBeenCalledOnce()
   })
 
   describe('collapsed node slot sync', () => {

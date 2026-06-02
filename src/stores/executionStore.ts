@@ -91,6 +91,7 @@ export const useExecutionStore = defineStore('execution', () => {
   const nodeProgressStatesByJob = ref<
     Record<JobId, Record<string, NodeProgressState>>
   >({})
+  const areNodeProgressVisualsSuppressed = ref(false)
 
   /**
    * Map of job ID to workflow ID for quick lookup across the app.
@@ -349,6 +350,7 @@ export const useExecutionStore = defineStore('execution', () => {
 
   function handleProgressState(e: CustomEvent<ProgressStateWsMessage>) {
     const { nodes, prompt_id: jobId } = e.detail
+    areNodeProgressVisualsSuppressed.value = false
 
     // Revoke previews for nodes that are starting to execute
     const previousForJob = nodeProgressStatesByJob.value[jobId] || {}
@@ -513,11 +515,16 @@ export const useExecutionStore = defineStore('execution', () => {
     return initializingJobIds.value.has(String(jobId))
   }
 
+  function suppressNodeProgressVisuals() {
+    areNodeProgressVisualsSuppressed.value = true
+  }
+
   /**
    * Reset execution-related state after a run completes or is stopped.
    */
   function resetExecutionState(jobIdParam?: JobId | null) {
     executionIdToLocatorCache.clear()
+    areNodeProgressVisualsSuppressed.value = false
     nodeProgressStates.value = {}
     const jobId = jobIdParam ?? activeJobId.value ?? null
     if (jobId) {
@@ -661,6 +668,7 @@ export const useExecutionStore = defineStore('execution', () => {
     nodeProgressStates,
     nodeLocationProgressStates,
     nodeProgressStatesByJob,
+    areNodeProgressVisualsSuppressed,
     runningJobIds,
     runningWorkflowCount,
     initializingJobIds,
@@ -670,6 +678,7 @@ export const useExecutionStore = defineStore('execution', () => {
     clearInitializationByJobIds,
     reconcileInitializingJobs,
     clearActiveJobIfStale,
+    suppressNodeProgressVisuals,
     bindExecutionEvents,
     unbindExecutionEvents,
     storeJob,

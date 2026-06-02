@@ -145,6 +145,154 @@ describe('ComfyApp', () => {
     mockExtensionService.invokeExtensionsAsync.mockResolvedValue(undefined)
   })
 
+  describe('resizeCanvas', () => {
+    function callResizeCanvas(canvas: HTMLCanvasElement) {
+      ;(
+        app as unknown as { resizeCanvas: (canvas: HTMLCanvasElement) => void }
+      ).resizeCanvas(canvas)
+    }
+
+    function setDevicePixelRatio(value: number) {
+      Object.defineProperty(window, 'devicePixelRatio', {
+        configurable: true,
+        value
+      })
+    }
+
+    function setCanvasDraw(draw: ReturnType<typeof vi.fn>) {
+      app.canvas = {
+        ...mockCanvas,
+        draw
+      } as unknown as LGraphCanvas
+    }
+
+    function mock2dContext(
+      canvas: HTMLCanvasElement,
+      scale: ReturnType<typeof vi.fn>
+    ) {
+      vi.spyOn(canvas, 'getContext').mockImplementation(
+        ((contextId: string) =>
+          contextId === '2d'
+            ? ({ scale } as unknown as CanvasRenderingContext2D)
+            : null) as HTMLCanvasElement['getContext']
+      )
+    }
+
+    it('ignores pathological huge bounds without redrawing', () => {
+      setDevicePixelRatio(2)
+
+      const draw = vi.fn()
+      const scale = vi.fn()
+      setCanvasDraw(draw)
+
+      const canvas = document.createElement('canvas')
+      canvas.width = 640
+      canvas.height = 480
+      vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+        width: 20000,
+        height: 18000
+      } as DOMRect)
+      mock2dContext(canvas, scale)
+
+      callResizeCanvas(canvas)
+
+      expect(canvas.width).toBe(640)
+      expect(canvas.height).toBe(480)
+      expect(scale).not.toHaveBeenCalled()
+      expect(draw).not.toHaveBeenCalled()
+    })
+
+    it('restores the previous size for non-finite bounds without redrawing', () => {
+      setDevicePixelRatio(2)
+
+      const draw = vi.fn()
+      const scale = vi.fn()
+      setCanvasDraw(draw)
+
+      const canvas = document.createElement('canvas')
+      canvas.width = 320
+      canvas.height = 240
+      vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+        width: Number.POSITIVE_INFINITY,
+        height: 180
+      } as DOMRect)
+      mock2dContext(canvas, scale)
+
+      callResizeCanvas(canvas)
+
+      expect(canvas.width).toBe(320)
+      expect(canvas.height).toBe(240)
+      expect(scale).not.toHaveBeenCalled()
+      expect(draw).not.toHaveBeenCalled()
+    })
+
+    it('resizes and redraws for sane bounds', () => {
+      setDevicePixelRatio(2)
+
+      const draw = vi.fn()
+      const scale = vi.fn()
+      setCanvasDraw(draw)
+
+      const canvas = document.createElement('canvas')
+      vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+        width: 320,
+        height: 180
+      } as DOMRect)
+      mock2dContext(canvas, scale)
+
+      callResizeCanvas(canvas)
+
+      expect(canvas.width).toBe(640)
+      expect(canvas.height).toBe(360)
+      expect(scale).toHaveBeenCalledWith(2, 2)
+      expect(draw).toHaveBeenCalledWith(true, true)
+    })
+
+    it('allows resizing at the backing-store threshold', () => {
+      setDevicePixelRatio(2)
+
+      const draw = vi.fn()
+      const scale = vi.fn()
+      setCanvasDraw(draw)
+
+      const canvas = document.createElement('canvas')
+      vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+        width: 8192,
+        height: 100
+      } as DOMRect)
+      mock2dContext(canvas, scale)
+
+      callResizeCanvas(canvas)
+
+      expect(canvas.width).toBe(16384)
+      expect(canvas.height).toBe(200)
+      expect(scale).toHaveBeenCalledWith(2, 2)
+      expect(draw).toHaveBeenCalledWith(true, true)
+    })
+
+    it('clamps device pixel ratio below one before resizing', () => {
+      setDevicePixelRatio(0.5)
+
+      const draw = vi.fn()
+      const scale = vi.fn()
+      setCanvasDraw(draw)
+
+      const canvas = document.createElement('canvas')
+      vi.spyOn(canvas, 'getBoundingClientRect').mockReturnValue({
+        width: 320.4,
+        height: 179.6
+      } as DOMRect)
+      mock2dContext(canvas, scale)
+
+      callResizeCanvas(canvas)
+
+      expect(canvas.width).toBe(320)
+      expect(canvas.height).toBe(180)
+      expect(scale).toHaveBeenCalledWith(1, 1)
+      expect(draw).toHaveBeenCalledWith(true, true)
+    })
+  })
+
   describe('refreshComboInNodes', () => {
     it('shows success toast and removes the pending toast after node defs reload', async () => {
       app.vueAppReady = true

@@ -15,6 +15,8 @@ import { forEachNode } from '@/utils/graphTraversalUtil'
 
 import {
   groupLinksByTuple,
+  purgeInvalidLinks,
+  purgeInvalidSerialisedLinks,
   purgeOrphanedLinks,
   repairInputLinks,
   selectSurvivorLink
@@ -2567,6 +2569,10 @@ export class LGraph
       let error = false
       const nodeDataMap = new Map<NodeId, ISerialisedNode>()
 
+      if (effectiveNodesData) {
+        purgeInvalidSerialisedLinks(this._links, effectiveNodesData)
+      }
+
       // create nodes
       this._nodes = []
       if (effectiveNodesData) {
@@ -2630,6 +2636,8 @@ export class LGraph
           layoutMutations.deleteReroute(reroute.id)
         }
       }
+
+      purgeInvalidLinks(this._links, (id) => this.getNodeById(id))
 
       // Remove duplicate links: links in output.links that share the same
       // (origin_id, origin_slot, target_id, target_slot) tuple.

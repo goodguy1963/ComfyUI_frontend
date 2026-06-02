@@ -14,6 +14,7 @@ import {
 } from '@/renderer/extensions/vueNodes/interactions/resize/resizeHandleConfig'
 
 export interface ResizeCallbackPayload {
+  phase: 'preview' | 'commit'
   size: Size
   position?: Point
 }
@@ -35,6 +36,7 @@ export function useNodeResize(
   const resizeStartSize = ref<Size | null>(null)
   const resizeStartPosition = ref<Point | null>(null)
   const resizeCorner = ref<CompassCorners>('SE')
+  let lastPayload: ResizeCallbackPayload | null = null
 
   // Snap-to-grid functionality
   const { shouldSnap, applySnapToPosition, applySnapToSize } = useNodeSnap()
@@ -196,6 +198,7 @@ export function useNodeResize(
       }
 
       const payload: ResizeCallbackPayload = {
+        phase: 'preview',
         size: { width: newWidth, height: newHeight }
       }
 
@@ -206,6 +209,7 @@ export function useNodeResize(
 
       const targetNodeElement = target.closest('[data-node-id]')
       if (targetNodeElement instanceof HTMLElement) {
+        lastPayload = payload
         resizeCallback(payload, targetNodeElement)
       }
     }
@@ -217,6 +221,7 @@ export function useNodeResize(
       resizeStartPointer.value = null
       resizeStartSize.value = null
       resizeStartPosition.value = null
+      lastPayload = null
 
       // Stop tracking shift key state
       stopShiftSync()
@@ -228,6 +233,10 @@ export function useNodeResize(
 
     const handlePointerUp = (upEvent: PointerEvent) => {
       if (isResizing.value) {
+        const targetNodeElement = target.closest('[data-node-id]')
+        if (lastPayload && targetNodeElement instanceof HTMLElement) {
+          resizeCallback({ ...lastPayload, phase: 'commit' }, targetNodeElement)
+        }
         try {
           target.releasePointerCapture(upEvent.pointerId)
         } catch {

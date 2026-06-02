@@ -41,6 +41,8 @@ const getNumberOptions = (credits: number): Intl.NumberFormatOptions => ({
   maximumFractionDigits: shouldShowDecimal(credits) ? 1 : 0
 })
 
+const PRICING_NUMBER_LOCALE = 'en-US'
+
 type CreditFormatOptions = {
   suffix?: string
   note?: string
@@ -52,6 +54,7 @@ export const formatCreditsValue = (usd: number): string => {
   // Use raw credits value (before rounding) to determine decimal display
   const rawCredits = usd * CREDITS_PER_USD
   return formatCredits({
+    locale: PRICING_NUMBER_LOCALE,
     value: rawCredits,
     numberOptions: getNumberOptions(rawCredits)
   })

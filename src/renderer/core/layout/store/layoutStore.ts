@@ -125,6 +125,9 @@ class LayoutStoreImpl implements LayoutStore {
   >()
   private pendingGlobalChanges: LayoutChange[] = []
   private isGlobalDispatchQueued = false
+  private pendingNodeChanges: LayoutChange[] = []
+  private isNodeDispatchQueued = false
+  private nodeDispatchGeneration = 0
 
   // CustomRef cache and trigger functions
   private nodeRefs = new Map<NodeId, Ref<NodeLayout | null>>()
@@ -520,6 +523,14 @@ class LayoutStoreImpl implements LayoutStore {
     if (deleted) {
       // Remove from spatial index
       this.slotSpatialIndex.remove(key)
+    }
+  }
+
+  deleteSlotLayoutsForNode(nodeId: NodeId): void {
+    for (const [key, layout] of this.slotLayouts) {
+      if (layout.nodeId === nodeId) {
+        this.deleteSlotLayout(key)
+      }
     }
   }
 
@@ -923,9 +934,10 @@ class LayoutStoreImpl implements LayoutStore {
       }
     })
 
-    // Keep node-scoped listeners synchronous for immediate local feedback,
-    // but queue global listener fan-out to avoid blocking hot paths.
-    this.notifyNodeChange(change)
+    // Canvas and external writes only feed visual DOM sync in current
+    // production consumers, so they can wait until the next frame.
+    // Vue and DOM changes stay synchronous for immediate local feedback.
+    this.queueNodeChange(change)
     this.queueGlobalChange(change)
   }
 
@@ -1016,6 +1028,9 @@ class LayoutStoreImpl implements LayoutStore {
       this.rerouteLayouts.clear()
       this.pendingGlobalChanges = []
       this.isGlobalDispatchQueued = false
+      this.pendingNodeChanges = []
+      this.isNodeDispatchQueued = false
+      this.nodeDispatchGeneration++
 
       nodes.forEach((node, index) => {
         const layout: NodeLayout = {
@@ -1414,6 +1429,45 @@ class LayoutStoreImpl implements LayoutStore {
     queueMicrotask(() => {
       this.flushQueuedGlobalChanges()
     })
+  }
+
+  private queueNodeChange(change: LayoutChange): void {
+    if (change.nodeIds.length === 0) return
+
+    if (
+      change.source !== LayoutSource.Canvas &&
+      change.source !== LayoutSource.External
+    ) {
+      this.notifyNodeChange(change)
+      return
+    }
+
+    const hasScopedListeners = change.nodeIds.some((nodeId) => {
+      const listeners = this.nodeChangeListeners.get(nodeId)
+      return Boolean(listeners && listeners.size > 0)
+    })
+
+    if (!hasScopedListeners) return
+
+    this.pendingNodeChanges.push(change)
+    if (this.isNodeDispatchQueued) return
+
+    this.isNodeDispatchQueued = true
+    const generation = this.nodeDispatchGeneration
+    const flushNodeChanges = () => {
+      if (generation !== this.nodeDispatchGeneration) return
+
+      this.isNodeDispatchQueued = false
+      if (this.pendingNodeChanges.length === 0) return
+
+      const queuedChanges = this.pendingNodeChanges
+      this.pendingNodeChanges = []
+      queuedChanges.forEach((queuedChange) => {
+        this.notifyNodeChange(queuedChange)
+      })
+    }
+
+    queueMicrotask(flushNodeChanges)
   }
 
   private flushQueuedGlobalChanges(): void {

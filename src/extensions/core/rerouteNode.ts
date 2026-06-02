@@ -84,11 +84,25 @@ app.registerExtension({
 
         // Find root input
         let currentNode: RerouteNode | null = this
-        let updateNodes: RerouteNode[] = []
+        const updateNodes: RerouteNode[] = []
+        const updateNodeSet = new Set<RerouteNode>()
+        const addUpdateNode = (node: RerouteNode) => {
+          if (updateNodeSet.has(node)) return
+          updateNodeSet.add(node)
+          updateNodes.push(node)
+        }
+        const prependUpdateNode = (node: RerouteNode) => {
+          if (updateNodeSet.has(node)) return
+          updateNodeSet.add(node)
+          updateNodes.unshift(node)
+        }
+        const inputVisited = new Set<RerouteNode>()
         let inputType = null
         let inputNode = null
         while (currentNode) {
-          updateNodes.unshift(currentNode)
+          if (inputVisited.has(currentNode)) break
+          inputVisited.add(currentNode)
+          prependUpdateNode(currentNode)
           const linkId = currentNode.inputs[0].link
           if (linkId !== null) {
             const link = graph.links[linkId]
@@ -96,7 +110,7 @@ app.registerExtension({
             const node = graph.getNodeById(link.origin_id)
             if (!node) return
             if (node instanceof RerouteNode) {
-              if (node === this) {
+              if (node === this || inputVisited.has(node)) {
                 // We've found a circle
                 currentNode.disconnectInput(link.target_slot)
                 currentNode = null
@@ -119,9 +133,12 @@ app.registerExtension({
 
         // Find all outputs
         const nodes: RerouteNode[] = [this]
+        const outputVisited = new Set<RerouteNode>()
         let outputType = null
         while (nodes.length) {
           currentNode = nodes.pop()!
+          if (outputVisited.has(currentNode)) continue
+          outputVisited.add(currentNode)
           const outputs = currentNode.outputs?.[0]?.links ?? []
           for (const linkId of outputs) {
             const link = graph.links[linkId]
@@ -132,9 +149,13 @@ app.registerExtension({
             const node = graph.getNodeById(link.target_id)
             if (!node) continue
             if (node instanceof RerouteNode) {
+              if (node === currentNode || outputVisited.has(node)) {
+                node.disconnectInput(link.target_slot)
+                continue
+              }
               // Follow reroute nodes
               nodes.push(node)
-              updateNodes.push(node)
+              addUpdateNode(node)
             } else {
               // We've found an output
               const nodeInput = node.inputs[link.target_slot]

@@ -5,6 +5,7 @@
  * positions in a single batched pass, and caches offsets so that node moves
  * update slot positions without DOM reads.
  */
+import { useDocumentVisibility } from '@vueuse/core'
 import { onMounted, onUnmounted, watch } from 'vue'
 import type { Ref } from 'vue'
 
@@ -25,16 +26,33 @@ import { createRafBatch } from '@/utils/rafBatch'
 
 // RAF batching
 const pendingNodes = new Set<string>()
+const dirtyNodes = new Set<string>()
+const panDeferredDOMMeasureNodes = new Set<string>()
+const visibility = useDocumentVisibility()
 const raf = createRafBatch(() => {
   flushScheduledSlotLayoutSync()
 })
 
-export function scheduleSlotLayoutSync(nodeId: string) {
+function isPureMiddleCanvasPanActive(): boolean {
+  const canvas = app.canvas
+  return Boolean(
+    LiteGraph.vueNodesMode &&
+      canvas?.pointer.isDown &&
+      canvas.pointer.eDown?.button === 1
+  )
+}
+
+function queueSlotLayoutSync(nodeId: string, invalidate: boolean) {
   // Drop signals for unregistered nodes (e.g. preview nodes with synthetic
   // ids from LGraphNodePreview) - they'd otherwise pump setDirty per RAF.
   if (!useNodeSlotRegistryStore().getNode(nodeId)) return
+  if (invalidate) dirtyNodes.add(nodeId)
   pendingNodes.add(nodeId)
   raf.schedule()
+}
+
+export function scheduleSlotLayoutSync(nodeId: string) {
+  queueSlotLayoutSync(nodeId, true)
 }
 
 function shouldWaitForSlotLayouts(): boolean {
@@ -59,7 +77,7 @@ function getSlotElementRect(el: HTMLElement): DOMRect | null {
 export function requestSlotLayoutSyncForAllNodes(): void {
   const nodeSlotRegistryStore = useNodeSlotRegistryStore()
   for (const nodeId of nodeSlotRegistryStore.getNodeIds()) {
-    scheduleSlotLayoutSync(nodeId)
+    queueSlotLayoutSync(nodeId, false)
   }
 
   // If no slots are currently registered, run the completion check immediately
@@ -68,6 +86,78 @@ export function requestSlotLayoutSyncForAllNodes(): void {
     flushScheduledSlotLayoutSync()
   }
 }
+
+function invalidateNodeSlotLayouts(nodeId: string): boolean {
+  const node = useNodeSlotRegistryStore().getNode(nodeId)
+  if (!node) return false
+
+  let invalidated = false
+  for (const [slotKey, entry] of node.slots) {
+    entry.cachedOffset = undefined
+    layoutStore.deleteSlotLayout(slotKey)
+    invalidated = true
+  }
+
+  if (invalidated) dirtyNodes.add(nodeId)
+  return invalidated
+}
+
+function invalidateAllSlotLayouts(): boolean {
+  let invalidated = false
+  for (const nodeId of useNodeSlotRegistryStore().getNodeIds()) {
+    invalidated = invalidateNodeSlotLayouts(nodeId) || invalidated
+  }
+  return invalidated
+}
+
+function nodeNeedsDOMMeasurement(nodeId: string): boolean {
+  if (dirtyNodes.has(nodeId)) return true
+
+  const node = useNodeSlotRegistryStore().getNode(nodeId)
+  if (!node) return false
+
+  for (const entry of node.slots.values()) {
+    if (!entry.cachedOffset || !entry.el.isConnected) return true
+  }
+
+  return false
+}
+
+function nodeHasUsableSlotOffsetCache(nodeId: string): boolean {
+  const node = useNodeSlotRegistryStore().getNode(nodeId)
+  if (!node) return false
+
+  for (const entry of node.slots.values()) {
+    if (!entry.cachedOffset || !entry.el.isConnected) return false
+  }
+
+  return true
+}
+
+export function flushPanDeferredSlotLayoutSyncs(): void {
+  if (panDeferredDOMMeasureNodes.size === 0) return
+
+  for (const nodeId of Array.from(panDeferredDOMMeasureNodes)) {
+    panDeferredDOMMeasureNodes.delete(nodeId)
+    dirtyNodes.add(nodeId)
+    pendingNodes.add(nodeId)
+  }
+
+  raf.schedule()
+}
+
+watch(visibility, (state, previousState) => {
+  if (state === previousState) return
+
+  if (state === 'hidden') {
+    if (invalidateAllSlotLayouts()) {
+      layoutStore.setPendingSlotSync(true)
+    }
+    return
+  }
+
+  requestSlotLayoutSyncForAllNodes()
+})
 
 function createSlotLayout(options: {
   nodeId: string
@@ -108,7 +198,22 @@ export function flushScheduledSlotLayoutSync() {
   }
   for (const nodeId of Array.from(pendingNodes)) {
     pendingNodes.delete(nodeId)
-    syncNodeSlotLayoutsFromDOM(nodeId)
+    const shouldMeasureFromDOM = nodeNeedsDOMMeasurement(nodeId)
+    dirtyNodes.delete(nodeId)
+
+    if (shouldMeasureFromDOM) {
+      if (isPureMiddleCanvasPanActive()) {
+        if (nodeHasUsableSlotOffsetCache(nodeId)) {
+          updateNodeSlotsFromCache(nodeId)
+        }
+        panDeferredDOMMeasureNodes.add(nodeId)
+        continue
+      }
+
+      syncNodeSlotLayoutsFromDOM(nodeId)
+    } else {
+      updateNodeSlotsFromCache(nodeId)
+    }
   }
 
   // Keep pending sync active until at least one measurable slot layout has
@@ -166,6 +271,7 @@ export function syncNodeSlotLayoutsFromDOM(nodeId: string) {
     if (!rect) {
       // Drop stale layout values while the slot is hidden so we don't render
       // links with off-screen coordinates from a previous graph/tab state.
+      entry.cachedOffset = undefined
       layoutStore.deleteSlotLayout(slotKey)
       continue
     }
@@ -245,15 +351,22 @@ function updateNodeSlotsFromCache(nodeId: string) {
       y: nodeLayout.position.y + entry.cachedOffset.y
     }
 
-    batch.push({
-      key: slotKey,
-      layout: createSlotLayout({
-        nodeId,
-        index: entry.index,
-        type: entry.type,
-        centerCanvas
-      })
+    const nextLayout = createSlotLayout({
+      nodeId,
+      index: entry.index,
+      type: entry.type,
+      centerCanvas
     })
+    const existingSlotLayout = layoutStore.getSlotLayout(slotKey)
+    if (
+      existingSlotLayout &&
+      isPointEqual(existingSlotLayout.position, nextLayout.position) &&
+      isBoundsEqual(existingSlotLayout.bounds, nextLayout.bounds)
+    ) {
+      continue
+    }
+
+    batch.push({ key: slotKey, layout: nextLayout })
   }
 
   if (batch.length) layoutStore.batchUpdateSlotLayouts(batch)
@@ -342,7 +455,6 @@ export function useSlotElementTracking(options: {
       delete entry.el.dataset.slotKey
       node.slots.delete(slotKey)
     }
-    layoutStore.deleteSlotLayout(slotKey)
 
     // If node has no more slots, clean up
     if (node.slots.size === 0) {

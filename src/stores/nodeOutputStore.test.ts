@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LGraphNode } from '@/lib/litegraph/src/litegraph'
 import { LiteGraph } from '@/lib/litegraph/src/litegraph'
 import type { ExecutedWsMessage } from '@/schemas/apiSchema'
+import { api } from '@/scripts/api'
 import { app } from '@/scripts/app'
 import { useNodeOutputStore } from '@/stores/nodeOutputStore'
 import * as litegraphUtil from '@/utils/litegraphUtil'
@@ -23,11 +24,18 @@ const mockGetNodeById = vi.fn()
 vi.mock('@/scripts/app', () => ({
   app: {
     getPreviewFormatParam: vi.fn(() => '&format=test_webp'),
+    getRandParam: vi.fn(() => '&rand=test'),
     rootGraph: {
       getNodeById: (...args: unknown[]) => mockGetNodeById(...args)
     },
     nodeOutputs: {} as Record<string, unknown>,
     nodePreviewImages: {} as Record<string, string[]>
+  }
+}))
+
+vi.mock('@/scripts/api', () => ({
+  api: {
+    apiURL: vi.fn((path: string) => `http://localhost${path}`)
   }
 }))
 
@@ -374,6 +382,57 @@ describe('nodeOutputStore getPreviewParam', () => {
     ])
     expect(store.getPreviewParam(node, outputs)).toBe('&format=test_webp')
     expect(vi.mocked(app).getPreviewFormatParam).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('nodeOutputStore derived image URL caching', () => {
+  beforeEach(() => {
+    setActivePinia(createTestingPinia({ stubActions: false }))
+    vi.clearAllMocks()
+    app.nodeOutputs = {}
+    app.nodePreviewImages = {}
+  })
+
+  it('reuses derived image URLs while outputs stay unchanged', () => {
+    const store = useNodeOutputStore()
+    const node = createMockNode({ id: 7 })
+
+    store.setNodeOutputsByExecutionId(
+      '7',
+      createMockOutputs([{ filename: 'cached.png', subfolder: '', type: 'temp' }])
+    )
+
+    const firstUrls = store.getNodeImageUrls(node)
+    const secondUrls = store.getNodeImageUrls(node)
+
+    expect(firstUrls).toEqual(secondUrls)
+    expect(secondUrls).toBe(firstUrls)
+    expect(vi.mocked(app).getRandParam).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(api.apiURL)).toHaveBeenCalledTimes(1)
+  })
+
+  it('rebuilds derived image URLs after outputs change', () => {
+    const store = useNodeOutputStore()
+    const node = createMockNode({ id: 7 })
+
+    store.setNodeOutputsByExecutionId(
+      '7',
+      createMockOutputs([{ filename: 'before.png', subfolder: '', type: 'temp' }])
+    )
+    const firstUrls = store.getNodeImageUrls(node)
+
+    store.setNodeOutputsByExecutionId(
+      '7',
+      createMockOutputs([{ filename: 'after.png', subfolder: '', type: 'temp' }])
+    )
+    const secondUrls = store.getNodeImageUrls(node)
+
+    expect(secondUrls).not.toBe(firstUrls)
+    expect(secondUrls).toEqual([
+      'http://localhost/view?filename=after.png&subfolder=&type=temp&format=test_webp&rand=test'
+    ])
+    expect(vi.mocked(app).getRandParam).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(api.apiURL)).toHaveBeenCalledTimes(2)
   })
 })
 

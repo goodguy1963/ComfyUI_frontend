@@ -20,11 +20,18 @@ interface CacheEntry {
   timestamp: number
 }
 
+interface OverflowItem {
+  bounds: Bounds
+  data: NodeId
+}
+
 /**
  * Spatial index manager using QuadTree
  */
 export class SpatialIndexManager {
   private quadTree: QuadTree<NodeId>
+  private quadTreeItems = new Set<NodeId>()
+  private overflowItems = new Map<NodeId, OverflowItem>()
   private queryCache: Map<string, CacheEntry>
   private cacheSize = 0
 
@@ -43,7 +50,14 @@ export class SpatialIndexManager {
    * Insert a node into the spatial index
    */
   insert(nodeId: NodeId, bounds: Bounds): void {
-    this.quadTree.insert(nodeId, bounds, nodeId)
+    this.overflowItems.delete(nodeId)
+    const inserted = this.quadTree.insert(nodeId, bounds, nodeId)
+    if (!inserted) {
+      this.quadTreeItems.delete(nodeId)
+      this.overflowItems.set(nodeId, { bounds, data: nodeId })
+    } else {
+      this.quadTreeItems.add(nodeId)
+    }
     this.invalidateCache()
   }
 
@@ -51,7 +65,21 @@ export class SpatialIndexManager {
    * Update a node's bounds in the spatial index
    */
   update(nodeId: NodeId, bounds: Bounds): void {
-    this.quadTree.update(nodeId, bounds)
+    if (this.overflowItems.has(nodeId)) {
+      this.overflowItems.delete(nodeId)
+      const inserted = this.quadTree.insert(nodeId, bounds, nodeId)
+      if (!inserted) {
+        this.overflowItems.set(nodeId, { bounds, data: nodeId })
+      } else {
+        this.quadTreeItems.add(nodeId)
+      }
+    } else if (this.quadTreeItems.has(nodeId)) {
+      const updated = this.quadTree.update(nodeId, bounds)
+      if (!updated) {
+        this.quadTreeItems.delete(nodeId)
+        this.overflowItems.set(nodeId, { bounds, data: nodeId })
+      }
+    }
     this.invalidateCache()
   }
 
@@ -61,7 +89,21 @@ export class SpatialIndexManager {
    */
   batchUpdate(updates: Array<{ nodeId: NodeId; bounds: Bounds }>): void {
     for (const { nodeId, bounds } of updates) {
-      this.quadTree.update(nodeId, bounds)
+      if (this.overflowItems.has(nodeId)) {
+        this.overflowItems.delete(nodeId)
+        const inserted = this.quadTree.insert(nodeId, bounds, nodeId)
+        if (!inserted) {
+          this.overflowItems.set(nodeId, { bounds, data: nodeId })
+        } else {
+          this.quadTreeItems.add(nodeId)
+        }
+      } else if (this.quadTreeItems.has(nodeId)) {
+        const updated = this.quadTree.update(nodeId, bounds)
+        if (!updated) {
+          this.quadTreeItems.delete(nodeId)
+          this.overflowItems.set(nodeId, { bounds, data: nodeId })
+        }
+      }
     }
     this.invalidateCache()
   }
@@ -71,6 +113,8 @@ export class SpatialIndexManager {
    */
   remove(nodeId: NodeId): void {
     this.quadTree.remove(nodeId)
+    this.quadTreeItems.delete(nodeId)
+    this.overflowItems.delete(nodeId)
     this.invalidateCache()
   }
 
@@ -94,6 +138,11 @@ export class SpatialIndexManager {
 
     // Perform query
     const result = this.quadTree.query(bounds)
+    for (const item of this.overflowItems.values()) {
+      if (this.boundsIntersect(item.bounds, bounds)) {
+        result.push(item.data)
+      }
+    }
 
     // Cache result
     this.addToCache(cacheKey, result)
@@ -106,6 +155,8 @@ export class SpatialIndexManager {
    */
   clear(): void {
     this.quadTree.clear()
+    this.quadTreeItems.clear()
+    this.overflowItems.clear()
     this.invalidateCache()
   }
 
@@ -113,7 +164,7 @@ export class SpatialIndexManager {
    * Get the current size of the index
    */
   get size(): number {
-    return this.quadTree.size
+    return this.quadTree.size + this.overflowItems.size
   }
 
   /**
@@ -122,9 +173,19 @@ export class SpatialIndexManager {
   getDebugInfo() {
     return {
       quadTreeInfo: this.quadTree.getDebugInfo(),
+      overflowItemCount: this.overflowItems.size,
       cacheSize: this.cacheSize,
       cacheEntries: this.queryCache.size
     }
+  }
+
+  private boundsIntersect(a: Bounds, b: Bounds): boolean {
+    return !(
+      a.x + a.width < b.x ||
+      b.x + b.width < a.x ||
+      a.y + a.height < b.y ||
+      b.y + b.height < a.y
+    )
   }
 
   /**

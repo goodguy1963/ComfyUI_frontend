@@ -40,6 +40,7 @@ const resizeObserverState = vi.hoisted(() => {
 
 const testState = vi.hoisted(() => ({
   linearMode: false,
+  isResizingVueNodes: { value: false },
   nodeLayouts: new Map<NodeId, NodeLayout>(),
   batchUpdateNodeBounds: vi.fn(),
   setSource: vi.fn(),
@@ -67,6 +68,7 @@ vi.mock('@/composables/element/useCanvasPositionConversion', () => ({
 vi.mock('@/renderer/core/layout/store/layoutStore', () => ({
   layoutStore: {
     batchUpdateNodeBounds: testState.batchUpdateNodeBounds,
+    isResizingVueNodes: testState.isResizingVueNodes,
     setSource: testState.setSource,
     getNodeLayoutRef: (nodeId: NodeId): Ref<NodeLayout | null> =>
       ref<NodeLayout | null>(testState.nodeLayouts.get(nodeId) ?? null)
@@ -157,6 +159,7 @@ function seedNodeLayout(options: {
 describe('useVueNodeResizeTracking', () => {
   beforeEach(() => {
     testState.linearMode = false
+    testState.isResizingVueNodes.value = false
     testState.nodeLayouts.clear()
     testState.batchUpdateNodeBounds.mockReset()
     testState.setSource.mockReset()
@@ -266,6 +269,38 @@ describe('useVueNodeResizeTracking', () => {
       }
     ])
     expect(testState.syncNodeSlotLayoutsFromDOM).toHaveBeenCalledWith(nodeId)
+  })
+
+  it('defers resize-observer writes while an interactive resize is active', async () => {
+    const nodeId = 'test-node'
+    const { entry } = createResizeEntry({
+      nodeId,
+      width: 240,
+      height: 180,
+      left: 100,
+      top: 200
+    })
+
+    seedNodeLayout({
+      nodeId,
+      left: 100,
+      top: 200,
+      width: 220,
+      height: 140
+    })
+
+    testState.isResizingVueNodes.value = true
+    resizeObserverState.callback?.([entry], createObserverMock())
+
+    expect(testState.setSource).not.toHaveBeenCalled()
+    expect(testState.batchUpdateNodeBounds).not.toHaveBeenCalled()
+    expect(testState.syncNodeSlotLayoutsFromDOM).not.toHaveBeenCalled()
+
+    testState.isResizingVueNodes.value = false
+    resizeObserverState.callback?.([], createObserverMock())
+
+    expect(testState.syncNodeSlotLayoutsFromDOM).toHaveBeenCalledWith(nodeId)
+    expect(testState.batchUpdateNodeBounds).not.toHaveBeenCalled()
   })
 
   it('writes collapsed dimensions through the normal bounds path', () => {

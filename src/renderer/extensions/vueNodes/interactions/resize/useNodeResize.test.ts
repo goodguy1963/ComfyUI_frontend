@@ -388,10 +388,11 @@ describe('useNodeResize', () => {
 
       const upEvent = createPointerEvent('pointerup', { pointerId: 1 })
       eventHandlers.pointerup?.(upEvent)
+      expect(cb.mock.calls.length).toBe(callsBeforeUp + 1)
 
       // Subsequent moves should be ignored after cleanup
       simulateMove(40, 40)
-      expect(cb.mock.calls.length).toBe(callsBeforeUp)
+      expect(cb.mock.calls.length).toBe(callsBeforeUp + 1)
     })
 
     it('handles releasePointerCapture throwing without breaking cleanup', async () => {
@@ -411,6 +412,27 @@ describe('useNodeResize', () => {
       simulateMove(50, 50)
       expect(cb.mock.calls.length).toBe(callsAfterUp)
       expect(el).toBeDefined()
+    })
+
+    it('emits preview payloads during move and one commit payload on pointerup', async () => {
+      const { cb, handle: h, startResize } = await setupDynamic(() => 150)
+
+      startResizeAt(startResize, h, 'NW')
+      simulateMove(-50, -30)
+
+      const previewPayload = cb.mock.calls.at(-1)![0] as ResizeCallbackPayload
+      expect(previewPayload.phase).toBe('preview')
+      expect(previewPayload.position).toEqual({ x: 50, y: 170 })
+
+      const upEvent = createPointerEvent('pointerup', { pointerId: 1 })
+      eventHandlers.pointerup?.(upEvent)
+
+      expect(cb).toHaveBeenCalledTimes(2)
+      const commitPayload = cb.mock.calls.at(-1)![0] as ResizeCallbackPayload
+      expect(commitPayload).toEqual({
+        ...previewPayload,
+        phase: 'commit'
+      })
     })
 
     it('applies snap-to-grid on SE (size only)', async () => {

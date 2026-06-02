@@ -1,9 +1,14 @@
-import { expect } from '@playwright/test'
+import { expect, mergeTests } from '@playwright/test'
 
-import { comfyPageFixture as test } from '@e2e/fixtures/ComfyPage'
+import { comfyPageFixture } from '@e2e/fixtures/ComfyPage'
+import { ExecutionHelper } from '@e2e/fixtures/helpers/ExecutionHelper'
 import { TestIds } from '@e2e/fixtures/selectors'
+import { webSocketFixture } from '@e2e/fixtures/ws'
+
+const test = mergeTests(comfyPageFixture, webSocketFixture)
 
 const UPDATED_SUBGRAPH_TITLE = 'Updated Subgraph Title'
+const EXECUTING_CLASS = /outline-node-stroke-executing/
 
 function hasVisibleNodeInViewport() {
   const canvas = window.app!.canvas
@@ -329,6 +334,42 @@ test.describe('Subgraph Navigation', { tag: ['@slow', '@subgraph'] }, () => {
           })
         )
         .toEqual({ exists: true, progress: undefined })
+    })
+
+    test('Vue subgraph progress outline clears after switching workflows', async ({
+      comfyPage,
+      getWebSocket
+    }) => {
+      await comfyPage.settings.setSetting('Comfy.VueNodes.Enabled', true)
+      await comfyPage.workflow.loadWorkflow('subgraphs/basic-subgraph')
+      await comfyPage.vueNodes.waitForNodes()
+
+      const ws = await getWebSocket()
+      const exec = new ExecutionHelper(comfyPage, ws)
+      const subgraphNode = comfyPage.vueNodes.getNodeLocator('2')
+
+      const jobId = await exec.run()
+      exec.executionStart(jobId)
+      exec.progressState(jobId, {
+        '2': {
+          value: 0,
+          max: 1,
+          state: 'running',
+          node_id: '2',
+          display_node_id: '2',
+          prompt_id: jobId
+        }
+      })
+
+      await expect(subgraphNode).toHaveClass(EXECUTING_CLASS)
+
+      await comfyPage.workflow.loadWorkflow('default')
+      await comfyPage.workflow.loadWorkflow('subgraphs/basic-subgraph')
+      await comfyPage.vueNodes.waitForNodes()
+
+      await expect(
+        comfyPage.vueNodes.getNodeLocator('2')
+      ).not.toHaveClass(EXECUTING_CLASS)
     })
   })
 })

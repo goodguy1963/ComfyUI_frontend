@@ -15,6 +15,8 @@ export enum EventType {
   API_USAGE_COMPLETED = 'api_usage_completed'
 }
 
+const EVENT_NUMBER_LOCALE = 'en-US'
+
 type CustomerEventsResponse =
   operations['GetCustomerEvents']['responses']['200']['content']['application/json']
 
@@ -123,7 +125,7 @@ export const useCustomerEventsService = () => {
 
   function formatJsonValue(value: unknown) {
     if (typeof value === 'number') {
-      return value.toLocaleString()
+      return value.toLocaleString(EVENT_NUMBER_LOCALE)
     }
     if (typeof value === 'string') {
       const date = new Date(value)

@@ -29,8 +29,10 @@ export interface PerfMeasurement {
   scriptDurationMs: number
   eventListeners: number
   totalBlockingTimeMs: number
+  frameCount: number
   frameDurationMs: number
   p95FrameDurationMs: number
+  taskDurationPerFrameMs: number
   allFrameDurationsMs: number[]
 }
 
@@ -102,37 +104,54 @@ export class PerformanceHelper {
     })
   }
 
-  /**
-   * Measure individual frame durations via rAF timing over a sample window.
-   * Returns all per-frame durations so callers can compute avg, p95, etc.
-   */
-  private async measureFrameDurations(sampleFrames = 30): Promise<number[]> {
-    return this.page.evaluate((frames) => {
-      return new Promise<number[]>((resolve) => {
-        const timeout = setTimeout(() => resolve([]), 5000)
-        const timestamps: number[] = []
-        let count = 0
-        function tick(ts: number) {
-          timestamps.push(ts)
-          count++
-          if (count <= frames) {
-            requestAnimationFrame(tick)
-          } else {
-            clearTimeout(timeout)
-            if (timestamps.length < 2) {
-              resolve([])
-              return
-            }
-            const durations: number[] = []
-            for (let i = 1; i < timestamps.length; i++) {
-              durations.push(timestamps[i] - timestamps[i - 1])
-            }
-            resolve(durations)
-          }
-        }
-        requestAnimationFrame(tick)
-      })
-    }, sampleFrames)
+  private async startFrameMeasurement(): Promise<void> {
+    await this.page.evaluate(() => {
+      const win = window as unknown as Record<string, unknown>
+      const existing = win.__perfFrameState as
+        | { active: boolean; rafId: number; timestamps: number[] }
+        | undefined
+
+      if (existing?.rafId) cancelAnimationFrame(existing.rafId)
+
+      const state = {
+        active: true,
+        rafId: 0,
+        timestamps: [] as number[]
+      }
+
+      const tick = (timestamp: number) => {
+        if (!state.active) return
+        state.timestamps.push(timestamp)
+        state.rafId = requestAnimationFrame(tick)
+      }
+
+      state.rafId = requestAnimationFrame(tick)
+      win.__perfFrameState = state
+    })
+  }
+
+  private async collectFrameDurations(): Promise<number[]> {
+    return this.page.evaluate(() => {
+      const state = (window as unknown as Record<string, unknown>)
+        .__perfFrameState as
+        | { active: boolean; rafId: number; timestamps: number[] }
+        | undefined
+      if (!state) return []
+
+      state.active = false
+      if (state.rafId) cancelAnimationFrame(state.rafId)
+
+      const timestamps = state.timestamps
+      state.timestamps = []
+      state.rafId = 0
+
+      const durations: number[] = []
+      for (let i = 1; i < timestamps.length; i++) {
+        durations.push(timestamps[i] - timestamps[i - 1])
+      }
+
+      return durations
+    })
   }
 
   async startMeasuring(): Promise<void> {
@@ -169,6 +188,7 @@ export class PerformanceHelper {
       state.tbtMs = 0
       state.observer.takeRecords()
     })
+    await this.startFrameMeasurement()
     this.snapshot = await this.getSnapshot()
   }
 
@@ -184,7 +204,7 @@ export class PerformanceHelper {
 
     const [totalBlockingTimeMs, allFrameDurationsMs] = await Promise.all([
       this.collectTBT(),
-      this.measureFrameDurations()
+      this.collectFrameDurations()
     ])
 
     const frameDurationMs =
@@ -192,6 +212,7 @@ export class PerformanceHelper {
         ? allFrameDurationsMs.reduce((a, b) => a + b, 0) /
           allFrameDurationsMs.length
         : 0
+    const frameCount = allFrameDurationsMs.length
 
     const sorted = [...allFrameDurationsMs].sort((a, b) => a - b)
     const p95FrameDurationMs =
@@ -212,8 +233,11 @@ export class PerformanceHelper {
       scriptDurationMs: delta('ScriptDuration') * 1000,
       eventListeners: delta('JSEventListeners'),
       totalBlockingTimeMs,
+      frameCount,
       frameDurationMs,
       p95FrameDurationMs,
+      taskDurationPerFrameMs:
+        frameCount > 0 ? (delta('TaskDuration') * 1000) / frameCount : 0,
       allFrameDurationsMs
     }
   }

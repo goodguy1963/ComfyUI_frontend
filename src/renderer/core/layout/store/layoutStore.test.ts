@@ -303,9 +303,52 @@ describe('layoutStore CRDT operations', () => {
     unsubscribeGlobal()
   })
 
+  it('flushes canvas-sourced node-scoped listeners in the next microtask', async () => {
+    const nodeId = 'deferred-node-dispatch'
+    const layout = createTestNode(nodeId)
+
+    layoutStore.applyOperation({
+      type: 'createNode',
+      entity: 'node',
+      nodeId,
+      layout,
+      timestamp: Date.now(),
+      source: LayoutSource.External,
+      actor: 'test'
+    })
+
+    const callOrder: string[] = []
+    const unsubscribeNode = layoutStore.onNodeChange(nodeId, () => {
+      callOrder.push('node')
+    })
+    const unsubscribeGlobal = layoutStore.onChange(() => {
+      callOrder.push('global')
+    })
+
+    layoutStore.applyOperation({
+      type: 'moveNode',
+      entity: 'node',
+      nodeId,
+      position: { x: 420, y: 280 },
+      previousPosition: layout.position,
+      timestamp: Date.now(),
+      source: LayoutSource.Canvas,
+      actor: 'test'
+    })
+
+    expect(callOrder).toEqual([])
+
+    await Promise.resolve()
+
+    expect(callOrder).toEqual(['node', 'global'])
+
+    unsubscribeNode()
+    unsubscribeGlobal()
+  })
+
   it('clears node-scoped listeners when reinitializing from LiteGraph', () => {
     const nodeId = 'reinit-node'
-    const staleListener = vi.fn()
+    const staleListener = vi.fn((_change: LayoutChange) => undefined)
 
     layoutStore.onNodeChange(nodeId, staleListener)
 
@@ -510,6 +553,39 @@ describe('layoutStore CRDT operations', () => {
     const recentOps = layoutStore.getOperationsSince(startTime + 50)
     expect(recentOps.length).toBeGreaterThanOrEqual(1)
     expect(recentOps[0].type).toBe('moveNode')
+  })
+
+  it('deletes all slot layouts for a removed node', () => {
+    const keepKey = getSlotKey('keep-node', 0, true)
+    const deleteKey = getSlotKey('delete-node', 0, true)
+
+    layoutStore.batchUpdateSlotLayouts([
+      {
+        key: keepKey,
+        layout: {
+          nodeId: 'keep-node',
+          index: 0,
+          type: 'input',
+          position: { x: 0, y: 0 },
+          bounds: { x: 0, y: 0, width: 10, height: 10 }
+        }
+      },
+      {
+        key: deleteKey,
+        layout: {
+          nodeId: 'delete-node',
+          index: 0,
+          type: 'input',
+          position: { x: 10, y: 10 },
+          bounds: { x: 10, y: 10, width: 10, height: 10 }
+        }
+      }
+    ])
+
+    layoutStore.deleteSlotLayoutsForNode('delete-node')
+
+    expect(layoutStore.getSlotLayout(deleteKey)).toBeNull()
+    expect(layoutStore.getSlotLayout(keepKey)).not.toBeNull()
   })
 
   it('normalizes DOM-sourced heights before storing', () => {

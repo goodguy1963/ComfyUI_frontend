@@ -992,9 +992,10 @@ export class SubgraphNode extends LGraphNode implements BaseLGraph {
 
   override onRemoved(): void {
     this._eventAbortController.abort()
+    const promotedViews = this._promotedViewManager.getViews()
     this.invalidatePromotedViews()
 
-    for (const widget of this.widgets) {
+    for (const widget of promotedViews) {
       if (isPromotedWidgetView(widget)) {
         this._clearDomOverrideForView(widget)
       }

@@ -768,6 +768,76 @@ describe('_removeDuplicateLinks', () => {
     const target = subgraph.getNodeById(link.target_id)!
     expect(target.inputs[0].link).toBe(link.id)
   })
+
+  it('purges legacy links whose origin or target nodes are missing during configure()', () => {
+    registerTestNodes()
+
+    const graphData: SerialisableGraph = {
+      version: 1,
+      id: zeroUuid,
+      revision: 0,
+      state: {
+        lastGroupId: 0,
+        lastNodeId: 2,
+        lastLinkId: 2,
+        lastRerouteId: 0
+      },
+      nodes: [
+        {
+          id: 1,
+          type: 'test/DupTestNode',
+          pos: [0, 0],
+          size: [140, 80],
+          flags: {},
+          order: 0,
+          mode: 0,
+          inputs: [{ name: 'input_0', type: 'number', link: null }],
+          outputs: [{ name: 'output_0', type: 'number', links: [1] }],
+          properties: {}
+        },
+        {
+          id: 2,
+          type: 'test/DupTestNode',
+          pos: [240, 0],
+          size: [140, 80],
+          flags: {},
+          order: 1,
+          mode: 0,
+          inputs: [{ name: 'input_0', type: 'number', link: 2 }],
+          outputs: [{ name: 'output_0', type: 'number', links: null }],
+          properties: {}
+        }
+      ],
+      links: [
+        {
+          id: 1,
+          origin_id: 1,
+          origin_slot: 0,
+          target_id: 999,
+          target_slot: 0,
+          type: 'number'
+        },
+        {
+          id: 2,
+          origin_id: 999,
+          origin_slot: 0,
+          target_id: 2,
+          target_slot: 0,
+          type: 'number'
+        }
+      ],
+      groups: [],
+      config: {},
+      extra: {}
+    }
+
+    const graph = new LGraph()
+    graph.configure(graphData)
+
+    expect(graph._links.size).toBe(0)
+    expect(graph.getNodeById(1)?.outputs[0].links).toEqual([])
+    expect(graph.getNodeById(2)?.inputs[0].link).toBeNull()
+  })
 })
 
 describe('Subgraph Unpacking', () => {

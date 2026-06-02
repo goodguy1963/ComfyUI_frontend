@@ -67,6 +67,13 @@ export function createPromotedWidgetView(
 class PromotedWidgetView implements IPromotedWidgetView {
   [symbol: symbol]: boolean
 
+  private static readonly REENTRY_RESOLVE_DEEPEST = 'resolveDeepest'
+  private static readonly REENTRY_WIDGET_STATE = 'getWidgetState'
+  private static readonly REENTRY_LINKED_INPUT_WIDGETS =
+    'getLinkedInputWidgets'
+  private static readonly REENTRY_LINKED_INPUT_WIDGET_STATES =
+    'getLinkedInputWidgetStates'
+
   readonly sourceNodeId: string
   readonly sourceWidgetName: string
 
@@ -85,6 +92,7 @@ class PromotedWidgetView implements IPromotedWidgetView {
   private projectedWidget?: BaseWidget
   private cachedDeepestByFrame?: { node: LGraphNode; widget: IBaseWidget }
   private cachedDeepestFrame = -1
+  private readonly activeReentryGuards = new Set<string>()
 
   private _boundSlot?: SubgraphSlotRef
   private _boundSlotVersion = -1
@@ -394,35 +402,48 @@ class PromotedWidgetView implements IPromotedWidgetView {
   private resolveDeepest():
     | { node: LGraphNode; widget: IBaseWidget }
     | undefined {
-    const frame = this.subgraphNode.rootGraph.primaryCanvas?.frame
-    if (frame !== undefined && this.cachedDeepestFrame === frame)
-      return this.cachedDeepestByFrame
+    return this.withReentryGuard(
+      PromotedWidgetView.REENTRY_RESOLVE_DEEPEST,
+      undefined,
+      () => {
+        const frame = this.subgraphNode.rootGraph.primaryCanvas?.frame
+        if (frame !== undefined && this.cachedDeepestFrame === frame)
+          return this.cachedDeepestByFrame
 
-    const result = resolveConcretePromotedWidget(
-      this.subgraphNode,
-      this.sourceNodeId,
-      this.sourceWidgetName
+        const result = resolveConcretePromotedWidget(
+          this.subgraphNode,
+          this.sourceNodeId,
+          this.sourceWidgetName
+        )
+        const resolved =
+          result.status === 'resolved' ? result.resolved : undefined
+
+        if (frame !== undefined) {
+          this.cachedDeepestFrame = frame
+          this.cachedDeepestByFrame = resolved
+        }
+
+        return resolved
+      }
     )
-    const resolved = result.status === 'resolved' ? result.resolved : undefined
-
-    if (frame !== undefined) {
-      this.cachedDeepestFrame = frame
-      this.cachedDeepestByFrame = resolved
-    }
-
-    return resolved
   }
 
   private getWidgetState() {
-    const linkedState = this.getLinkedInputWidgetStates()[0]
-    if (linkedState) return linkedState
+    return this.withReentryGuard(
+      PromotedWidgetView.REENTRY_WIDGET_STATE,
+      undefined,
+      () => {
+        const linkedState = this.getLinkedInputWidgetStates()[0]
+        if (linkedState) return linkedState
 
-    const resolved = this.resolveDeepest()
-    if (!resolved) return undefined
-    return useWidgetValueStore().getWidget(
-      this.graphId,
-      stripGraphPrefix(String(resolved.node.id)),
-      resolved.widget.name
+        const resolved = this.resolveDeepest()
+        if (!resolved) return undefined
+        return useWidgetValueStore().getWidget(
+          this.graphId,
+          stripGraphPrefix(String(resolved.node.id)),
+          resolved.widget.name
+        )
+      }
     )
   }
 
@@ -431,50 +452,77 @@ class PromotedWidgetView implements IPromotedWidgetView {
     widgetName: string
     widget: IBaseWidget
   }> {
-    const linkedInputSlot = this.subgraphNode.inputs.find((input) => {
-      if (!input._subgraphSlot) return false
-      if (matchPromotedInput([input], this) !== input) return false
+    return this.withReentryGuard(
+      PromotedWidgetView.REENTRY_LINKED_INPUT_WIDGETS,
+      [],
+      () => {
+        const linkedInputSlot = this.subgraphNode.inputs.find((input) => {
+          if (!input._subgraphSlot) return false
+          if (matchPromotedInput([input], this) !== input) return false
 
-      const boundWidget = input._widget
-      if (boundWidget === this) return true
+          const boundWidget = input._widget
+          if (boundWidget === this) return true
 
-      if (boundWidget && isPromotedWidgetView(boundWidget)) {
-        return (
-          boundWidget.sourceNodeId === this.sourceNodeId &&
-          boundWidget.sourceWidgetName === this.sourceWidgetName
-        )
+          if (boundWidget && isPromotedWidgetView(boundWidget)) {
+            return (
+              boundWidget.sourceNodeId === this.sourceNodeId &&
+              boundWidget.sourceWidgetName === this.sourceWidgetName
+            )
+          }
+
+          return input._subgraphSlot
+            .getConnectedWidgets()
+            .filter(hasWidgetNode)
+            .some(
+              (widget) =>
+                String(widget.node.id) === this.sourceNodeId &&
+                widget.name === this.sourceWidgetName
+            )
+        })
+        const linkedInput = linkedInputSlot?._subgraphSlot
+        if (!linkedInput) return []
+
+        return linkedInput
+          .getConnectedWidgets()
+          .filter(hasWidgetNode)
+          .map((widget) => ({
+            nodeId: stripGraphPrefix(String(widget.node.id)),
+            widgetName: widget.name,
+            widget
+          }))
       }
-
-      return input._subgraphSlot
-        .getConnectedWidgets()
-        .filter(hasWidgetNode)
-        .some(
-          (widget) =>
-            String(widget.node.id) === this.sourceNodeId &&
-            widget.name === this.sourceWidgetName
-        )
-    })
-    const linkedInput = linkedInputSlot?._subgraphSlot
-    if (!linkedInput) return []
-
-    return linkedInput
-      .getConnectedWidgets()
-      .filter(hasWidgetNode)
-      .map((widget) => ({
-        nodeId: stripGraphPrefix(String(widget.node.id)),
-        widgetName: widget.name,
-        widget
-      }))
+    )
   }
 
   private getLinkedInputWidgetStates(): WidgetState[] {
-    const widgetStore = useWidgetValueStore()
+    return this.withReentryGuard(
+      PromotedWidgetView.REENTRY_LINKED_INPUT_WIDGET_STATES,
+      [],
+      () => {
+        const widgetStore = useWidgetValueStore()
 
-    return this.getLinkedInputWidgets()
-      .map(({ nodeId, widgetName }) =>
-        widgetStore.getWidget(this.graphId, nodeId, widgetName)
-      )
-      .filter((state): state is WidgetState => state !== undefined)
+        return this.getLinkedInputWidgets()
+          .map(({ nodeId, widgetName }) =>
+            widgetStore.getWidget(this.graphId, nodeId, widgetName)
+          )
+          .filter((state): state is WidgetState => state !== undefined)
+      }
+    )
+  }
+
+  private withReentryGuard<TResult>(
+    key: string,
+    fallback: TResult,
+    resolve: () => TResult
+  ): TResult {
+    if (this.activeReentryGuards.has(key)) return fallback
+
+    this.activeReentryGuards.add(key)
+    try {
+      return resolve()
+    } finally {
+      this.activeReentryGuards.delete(key)
+    }
   }
 
   private getProjectedWidget(resolved: {

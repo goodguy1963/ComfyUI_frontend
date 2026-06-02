@@ -9,6 +9,8 @@
     :data-node-id="nodeData.id"
     :data-collapsed="isCollapsed || undefined"
     :data-ghost="nodeData.flags?.ghost || undefined"
+    :data-low-detail="lowDetail || undefined"
+    :data-motion-lod-eligible="motionLodEligible ? '' : undefined"
     :class="
       cn(
         'group/node lg-node absolute isolate text-sm',
@@ -28,7 +30,7 @@
     "
     :style="{
       '--min-node-width': `${MIN_NODE_WIDTH}px`,
-      transform: `translate(${position.x ?? 0}px, ${(position.y ?? 0) - LiteGraph.NODE_TITLE_HEIGHT}px)`,
+      transform: `translate(${displayPosition.x ?? 0}px, ${(displayPosition.y ?? 0) - LiteGraph.NODE_TITLE_HEIGHT}px)`,
       zIndex: zIndex,
       opacity: nodeOpacity
     }"
@@ -93,7 +95,7 @@
       }"
     >
       <div
-        v-if="displayHeader"
+        v-if="displayHeader && !lowDetail"
         class="relative flex flex-col items-center justify-center"
       >
         <template v-if="isCollapsed">
@@ -133,7 +135,7 @@
         <NodeSlots :node-data="nodeData" />
       </template>
 
-      <template v-else-if="!isCollapsed">
+      <template v-else-if="!isCollapsed && !lowDetail">
         <div class="relative">
           <div
             v-if="executing && progress !== undefined"
@@ -159,9 +161,18 @@
         >
           <NodeSlots :node-data="nodeData" />
 
-          <NodeWidgets v-if="nodeData.widgets?.length" :node-data="nodeData" />
+          <template
+            v-if="nodeData.widgets?.length && shouldRenderMotionHeavyInternals"
+          >
+            <div class="node-motion-hide-middle-close">
+              <NodeWidgets :node-data="nodeData" />
+            </div>
+          </template>
 
-          <div v-if="hasCustomContent" class="flex min-h-0 flex-1 flex-col">
+          <div
+            v-if="hasCustomContent && shouldRenderMotionHeavyInternals"
+            class="node-motion-hide-middle-close flex min-h-0 flex-1 flex-col"
+          >
             <NodeContent
               v-if="nodeMedia"
               :node-data="nodeData"
@@ -174,39 +185,48 @@
               :media="preview"
             />
           </div>
-          <LivePreview
-            v-if="shouldShowPreviewImg && !lgraphNode?.isSubgraphNode()"
-            :image-url="latestPreviewUrl"
-          />
-          <NodeBadges
+          <div
+            v-if="
+              shouldRenderMotionHeavyInternals &&
+              shouldShowPreviewImg &&
+              !lgraphNode?.isSubgraphNode()
+            "
+            class="node-motion-hide-middle-close"
+          >
+            <LivePreview :image-url="latestPreviewUrl" />
+          </div>
+          <div
             v-if="!isTransparentHeaderless"
-            v-bind="badges"
-            :pricing="undefined"
-            class="mt-auto"
-          />
+            class="node-motion-hide-middle"
+          >
+            <NodeBadges
+              v-bind="badges"
+              :pricing="undefined"
+              class="mt-auto"
+            />
+          </div>
         </div>
       </template>
     </div>
-    <NodeFooter
-      v-if="!isRerouteNode"
-      :is-subgraph="!!lgraphNode?.isSubgraphNode()"
-      :has-any-error="hasAnyError"
-      :show-errors-tab-enabled="showErrorsTabEnabled"
-      :show-advanced-inputs-button="showAdvancedInputsButton"
-      :show-advanced-state="showAdvancedState"
-      :header-color="applyLightThemeColor(nodeData?.color)"
-      :shape="nodeData.shape"
-      @enter-subgraph="handleEnterSubgraph"
-      @open-errors="handleOpenErrors"
-      @toggle-advanced="handleToggleAdvanced"
-    />
+    <div
+      v-if="!isRerouteNode && !lowDetail && shouldRenderMotionHeavyInternals"
+      class="node-motion-hide-middle-close"
+    >
+      <NodeFooter
+        :is-subgraph="!!lgraphNode?.isSubgraphNode()"
+        :has-any-error="hasAnyError"
+        :show-errors-tab-enabled="showErrorsTabEnabled"
+        :show-advanced-inputs-button="showAdvancedInputsButton"
+        :show-advanced-state="showAdvancedState"
+        :header-color="applyLightThemeColor(nodeData?.color)"
+        :shape="nodeData.shape"
+        @enter-subgraph="handleEnterSubgraph"
+        @open-errors="handleOpenErrors"
+        @toggle-advanced="handleToggleAdvanced"
+      />
+    </div>
     <template
-      v-if="
-        !isCollapsed &&
-        !isRerouteNode &&
-        nodeData.resizable !== false &&
-        !isSelectMode
-      "
+      v-if="canRenderResizeHandles"
     >
       <div
         v-for="handle in RESIZE_HANDLES"
@@ -219,7 +239,8 @@
             baseResizeHandleClasses,
             handle.positionClasses,
             handle.cursorClass,
-            'group-hover/node:opacity-100'
+            'group-hover/node:opacity-100',
+            'node-motion-hide-middle-close'
           )
         "
         @pointerdown.stop="handleResizePointerDown($event, handle.corner)"
@@ -250,6 +271,7 @@ import { storeToRefs } from 'pinia'
 import {
   computed,
   customRef,
+  defineAsyncComponent,
   nextTick,
   onErrorCaptured,
   onMounted,
@@ -279,11 +301,12 @@ import { useTelemetry } from '@/platform/telemetry'
 import { useCanvasStore } from '@/renderer/core/canvas/canvasStore'
 import { useCanvasInteractions } from '@/renderer/core/canvas/useCanvasInteractions'
 import { layoutStore } from '@/renderer/core/layout/store/layoutStore'
+import { useTransformState } from '@/renderer/core/layout/transform/useTransformState'
 import { useGLSLPreview } from '@/renderer/glsl/useGLSLPreview'
 import { usePromotedPreviews } from '@/composables/node/usePromotedPreviews'
 import NodeBadges from '@/renderer/extensions/vueNodes/components/NodeBadges.vue'
 import { LayoutSource } from '@/renderer/core/layout/types'
-import type { LayoutChange } from '@/renderer/core/layout/types'
+import type { LayoutChange, Point } from '@/renderer/core/layout/types'
 import AppOutput from '@/renderer/extensions/linearMode/AppOutput.vue'
 import SlotConnectionDot from '@/renderer/extensions/vueNodes/components/SlotConnectionDot.vue'
 import { useNodeEventHandlers } from '@/renderer/extensions/vueNodes/composables/useNodeEventHandlers'
@@ -311,25 +334,32 @@ import {
 import { cn } from '@comfyorg/tailwind-utils'
 import { isTransparent } from '@/utils/colorUtil'
 
-import { useLayoutMutations } from '@/renderer/core/layout/operations/layoutMutations'
 import { MIN_NODE_WIDTH } from '@/renderer/core/layout/transform/graphRenderTransform'
 
 import { RESIZE_HANDLES } from '../interactions/resize/resizeHandleConfig'
 import { useNodeResize } from '../interactions/resize/useNodeResize'
-import LivePreview from './LivePreview.vue'
-import NodeContent from './NodeContent.vue'
 import NodeHeader from './NodeHeader.vue'
 import NodeFooter from './NodeFooter.vue'
 import NodeSlots from './NodeSlots.vue'
 import NodeWidgets from './NodeWidgets.vue'
 
+const NodeContent = defineAsyncComponent(() => import('./NodeContent.vue'))
+const LivePreview = defineAsyncComponent(() => import('./LivePreview.vue'))
+
 // Extended props for main node component
+type ActivePanDetailLevel = 'none' | 'middle' | 'close'
+
 interface LGraphNodeProps {
   nodeData: VueNodeData
   error?: string | null
+  activePanDetail?: ActivePanDetailLevel
 }
 
-const { nodeData, error = null } = defineProps<LGraphNodeProps>()
+const {
+  nodeData,
+  error = null,
+  activePanDetail = 'none'
+} = defineProps<LGraphNodeProps>()
 
 const { t } = useI18n()
 
@@ -352,6 +382,7 @@ const { executing, progress } = useNodeExecutionState(nodeLocatorId)
 const executionErrorStore = useExecutionErrorStore()
 const missingModelStore = useMissingModelStore()
 const missingNodesErrorStore = useMissingNodesErrorStore()
+const { camera } = useTransformState()
 const hasExecutionError = computed(
   () => executionErrorStore.lastExecutionErrorNodeId === nodeData.id
 )
@@ -384,6 +415,31 @@ const bypassed = computed(
 )
 const muted = computed((): boolean => nodeData.mode === LGraphEventMode.NEVER)
 
+const lowDetail = computed(
+  () =>
+    camera.z <= 0.2 &&
+    !isSelected.value &&
+    !executing.value &&
+    !hasAnyError.value &&
+    !isCollapsed.value &&
+    !isRerouteNode.value &&
+    !isGhostPlacing.value
+)
+
+const motionLodEligible = computed(
+  () =>
+    !isSelected.value &&
+    !executing.value &&
+    !hasAnyError.value &&
+    !isCollapsed.value &&
+    !isRerouteNode.value &&
+    !isGhostPlacing.value
+)
+
+const shouldRenderMotionHeavyInternals = computed(
+  () => activePanDetail !== 'middle' || !motionLodEligible.value
+)
+
 const nodeOpacity = computed(() => {
   const globalOpacity = settingStore.get('Comfy.Node.Opacity') ?? 1
 
@@ -414,6 +470,8 @@ onErrorCaptured((error) => {
 })
 
 const { position, size, zIndex } = useNodeLayout(() => nodeData.id)
+const resizePreviewPosition = ref<Point | null>(null)
+const displayPosition = computed(() => resizePreviewPosition.value ?? position.value)
 const { pointerHandlers } = useNodePointerInteractions(() => nodeData.id)
 const { onPointerdown, ...remainingPointerHandlers } = pointerHandlers
 const { startDrag } = useNodeDrag()
@@ -501,8 +559,6 @@ onUnmounted(() => {
 const baseResizeHandleClasses =
   'absolute h-5 w-5 opacity-0 pointer-events-auto focus-visible:outline focus-visible:outline-2 focus-visible:outline-white/40'
 
-const mutations = useLayoutMutations()
-
 const { startResize } = useNodeResize((result, element) => {
   if (isCollapsed.value) return
 
@@ -513,11 +569,27 @@ const { startResize } = useNodeResize((result, element) => {
   element.style.setProperty('--node-width', `${clampedWidth}px`)
   element.style.setProperty('--node-height', `${result.size.height}px`)
 
-  // Update position for non-SE corner resizing
-  if (result.position) {
-    mutations.setSource(LayoutSource.Vue)
-    mutations.moveNode(nodeData.id, result.position)
+  if (result.phase === 'preview') {
+    resizePreviewPosition.value = result.position ?? null
+    return
   }
+
+  const currentLayout = layoutStore.getNodeLayoutRef(nodeData.id).value
+  const finalPosition = result.position ?? currentLayout?.position ?? position.value
+
+  layoutStore.setSource(LayoutSource.DOM)
+  layoutStore.batchUpdateNodeBounds([
+    {
+      nodeId: nodeData.id,
+      bounds: {
+        x: finalPosition.x,
+        y: finalPosition.y,
+        width: clampedWidth,
+        height: result.size.height
+      }
+    }
+  ])
+  resizePreviewPosition.value = null
 })
 
 const handleResizePointerDown = (
@@ -594,6 +666,15 @@ const isTransparentHeaderless = computed(
     !displayHeader.value &&
     !!nodeData.bgcolor &&
     isTransparent(nodeData.bgcolor)
+)
+
+const canRenderResizeHandles = computed(
+  () =>
+    !isCollapsed.value &&
+    !isRerouteNode.value &&
+    !lowDetail.value &&
+    nodeData.resizable !== false &&
+    !isSelectMode.value
 )
 
 const rootBorderShapeClass = computed(() => {
@@ -822,3 +903,20 @@ function handleDrop() {
   app.dragOverNode = lgraphNode.value
 }
 </script>
+
+<style scoped>
+[data-testid='transform-pane'][data-active-pan-detail='middle']
+  [data-motion-lod-eligible]
+  .node-motion-hide-middle,
+[data-testid='transform-pane'][data-active-pan-detail='middle']
+  [data-motion-lod-eligible]
+  .node-motion-hide-middle-close,
+[data-testid='transform-pane'][data-active-pan-detail='close']
+  [data-motion-lod-eligible]
+  .node-motion-hide-close,
+[data-testid='transform-pane'][data-active-pan-detail='close']
+  [data-motion-lod-eligible]
+  .node-motion-hide-middle-close {
+  display: none;
+}
+</style>

@@ -1072,6 +1072,29 @@ describe('useExecutionStore - WebSocket event handlers', () => {
     })
   })
 
+  describe('progress_state visual suppression', () => {
+    it('restores node progress visuals on the next progress_state event', () => {
+      store.suppressNodeProgressVisuals()
+
+      fire('progress_state', {
+        prompt_id: 'job-1',
+        nodes: {
+          '2': {
+            value: 0,
+            max: 1,
+            state: 'running',
+            node_id: '2',
+            display_node_id: '2',
+            prompt_id: 'job-1'
+          }
+        }
+      })
+
+      expect(store.areNodeProgressVisualsSuppressed).toBe(false)
+      expect(store.nodeProgressStates['2']?.state).toBe('running')
+    })
+  })
+
   describe('status', () => {
     it('reads clientId from api once and stops listening', async () => {
       const apiModule = await import('@/scripts/api')

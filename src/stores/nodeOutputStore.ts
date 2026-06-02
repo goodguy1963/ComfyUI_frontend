@@ -46,10 +46,18 @@ interface SetOutputOptions {
   merge?: boolean
 }
 
+interface DerivedImageUrlCacheEntry {
+  outputRef: ExecutedWsMessage['output']
+  imagesRef: ExecutedWsMessage['output']['images']
+  previewParam: string
+  urls: string[]
+}
+
 export const useNodeOutputStore = defineStore('nodeOutput', () => {
   const { nodeIdToNodeLocatorId, nodeToNodeLocatorId } = useWorkflowStore()
   const scheduledRevoke: Record<NodeLocatorId, { stop: () => void }> = {}
   const latestPreview = ref<string[]>([])
+  const derivedImageUrlCache = new WeakMap<LGraphNode, DerivedImageUrlCacheEntry>()
 
   function scheduleRevoke(locator: NodeLocatorId, cb: () => void) {
     scheduledRevoke[locator]?.stop()
@@ -107,15 +115,34 @@ export const useNodeOutputStore = defineStore('nodeOutput', () => {
   ): string[] | undefined {
     if (!outputs?.images?.length) return
 
-    const rand = app.getRandParam()
     const previewParam = getPreviewParam(node, outputs)
+    const cached = derivedImageUrlCache.get(node)
+    if (
+      cached &&
+      cached.outputRef === outputs &&
+      cached.imagesRef === outputs.images &&
+      cached.previewParam === previewParam
+    ) {
+      return cached.urls
+    }
 
-    return outputs.images
+    const rand = app.getRandParam()
+
+    const urls = outputs.images
       .filter((image) => image != null)
       .map((image) => {
         const params = new URLSearchParams(image)
         return api.apiURL(`/view?${params}${previewParam}${rand}`)
       })
+
+    derivedImageUrlCache.set(node, {
+      outputRef: outputs,
+      imagesRef: outputs.images,
+      previewParam,
+      urls
+    })
+
+    return urls
   }
 
   function getNodeImageUrls(node: LGraphNode): string[] | undefined {

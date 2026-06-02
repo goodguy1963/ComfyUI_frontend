@@ -80,7 +80,25 @@ const trackingConfigs = new Map<string, ElementTrackingConfig>([
 const deferredElements = new Set<HTMLElement>()
 const elementsNeedingFreshMeasurement = new WeakSet<HTMLElement>()
 const cachedNodeMeasurements = new WeakMap<HTMLElement, CachedNodeMeasurement>()
+const nodesPendingResizeSlotResync = new Set<NodeId>()
 const visibility = useDocumentVisibility()
+
+function flushPendingResizeSlotResyncs() {
+  if (nodesPendingResizeSlotResync.size === 0) return
+
+  for (const nodeId of nodesPendingResizeSlotResync) {
+    syncNodeSlotLayoutsFromDOM(nodeId)
+  }
+  nodesPendingResizeSlotResync.clear()
+}
+
+watch(
+  () => layoutStore.isResizingVueNodes.value,
+  (isResizing) => {
+    if (isResizing) return
+    flushPendingResizeSlotResyncs()
+  }
+)
 
 function markElementForFreshMeasurement(element: HTMLElement) {
   elementsNeedingFreshMeasurement.add(element)
@@ -103,6 +121,10 @@ watch(visibility, (state) => {
 // Single ResizeObserver instance for all Vue elements
 const resizeObserver = new ResizeObserver((entries) => {
   if (useCanvasStore().linearMode) return
+
+  if (!layoutStore.isResizingVueNodes.value) {
+    flushPendingResizeSlotResyncs()
+  }
 
   // Skip measurements when tab is hidden — bounding rects are unreliable
   if (visibility.value === 'hidden') {
@@ -225,6 +247,11 @@ const resizeObserver = new ResizeObserver((entries) => {
         nodeId,
         bounds: normalizedBounds
       })
+    }
+
+    if (nodeId && layoutStore.isResizingVueNodes.value) {
+      nodesPendingResizeSlotResync.add(nodeId)
+      continue
     }
 
     if (nodeLayout && isBoundsEqual(nodeLayout.bounds, normalizedBounds)) {

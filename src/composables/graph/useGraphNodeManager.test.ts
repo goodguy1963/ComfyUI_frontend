@@ -2,9 +2,12 @@ import { createTestingPinia } from '@pinia/testing'
 import { fromAny } from '@total-typescript/shoehorn'
 import { setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { computed, nextTick, watch } from 'vue'
+import { computed, isReactive, nextTick, watch } from 'vue'
 
-import { useGraphNodeManager } from '@/composables/graph/useGraphNodeManager'
+import {
+  extractVueNodeData,
+  useGraphNodeManager
+} from '@/composables/graph/useGraphNodeManager'
 import { createPromotedWidgetView } from '@/core/graph/subgraph/promotedWidgetView'
 import { BaseWidget, LGraph, LGraphNode } from '@/lib/litegraph/src/litegraph'
 import { widgetEntityId } from '@/world/entityIds'
@@ -85,6 +88,180 @@ describe('Node Reactivity', () => {
 
     expect(onValueChange).toHaveBeenCalledTimes(1)
     expect(widgetValue.value).toBe(99)
+  })
+
+  it('preserves node entry identity for single-node property changes', async () => {
+    const graph = new LGraph()
+    const node = new LGraphNode('test')
+    node.title = 'before'
+    graph.add(node)
+
+    const { vueNodeData } = useGraphNodeManager(graph)
+    const nodeId = String(node.id)
+    const initialNodeData = vueNodeData.get(nodeId)
+    if (!initialNodeData) throw new Error('Expected initial node data')
+
+    graph.trigger('node:property:changed', {
+      nodeId,
+      property: 'title',
+      newValue: 'after'
+    })
+    await nextTick()
+
+    expect(vueNodeData.get(nodeId)).toBe(initialNodeData)
+    expect(initialNodeData.title).toBe('after')
+  })
+
+  it('does not keep wrapping the widgets getter when extracting the same node repeatedly', () => {
+    const node = new LGraphNode('reroute')
+    node.addWidget('number', 'seed', 7, () => undefined, {})
+
+    for (let i = 0; i < 5000; i++) {
+      extractVueNodeData(node)
+    }
+
+    expect(() => node.widgets?.some((widget) => widget.name === 'seed')).not.toThrow()
+    expect(node.widgets?.some((widget) => widget.name === 'seed')).toBe(true)
+  })
+
+  it('keeps empty synthetic widget getters non-reactive when syncing into vue node data', () => {
+    const graph = new LGraph()
+    const node = new LGraphNode('reroute')
+    const syntheticWidgets: BaseWidget[] = []
+    graph.add(node)
+
+    Object.defineProperty(node, 'widgets', {
+      get: () => syntheticWidgets,
+      configurable: true,
+      enumerable: true
+    })
+
+    const { vueNodeData } = useGraphNodeManager(graph)
+
+    for (let i = 0; i < 5000; i++) {
+      const nodeData = vueNodeData.get(String(node.id))
+      if (!nodeData) {
+        throw new Error('Expected vue node data for synthetic widget getter')
+      }
+      expect(nodeData.widgets).toHaveLength(0)
+    }
+
+    expect(node.widgets).toBe(syntheticWidgets)
+    expect(isReactive(node.widgets)).toBe(false)
+  })
+
+  it('fails closed when malformed widget extraction overflows', () => {
+    const graph = new LGraph()
+    const node = new LGraphNode('reroute')
+    graph.add(node)
+
+    Object.defineProperty(node, 'widgets', {
+      get() {
+        throw new RangeError('Maximum call stack size exceeded')
+      },
+      configurable: true,
+      enumerable: true
+    })
+
+    const { vueNodeData } = useGraphNodeManager(graph)
+    const nodeData = vueNodeData.get(String(node.id))
+    if (!nodeData) {
+      throw new Error('Expected vue node data after malformed widget overflow')
+    }
+
+    expect(nodeData.widgets).toEqual([])
+  })
+
+  it('does not rebuild the ordered node collection for unrelated node property changes', async () => {
+    const graph = new LGraph()
+    const firstNode = new LGraphNode('first')
+    firstNode.title = 'first-before'
+    graph.add(firstNode)
+
+    const secondNode = new LGraphNode('second')
+    secondNode.title = 'second-before'
+    graph.add(secondNode)
+
+    const { vueNodeData } = useGraphNodeManager(graph)
+    const orderedNodes = computed(() => Array.from(vueNodeData.values()))
+    const orderedNodesWatcher = vi.fn()
+    watch(orderedNodes, orderedNodesWatcher)
+
+    const initialOrderedNodes = orderedNodes.value
+    const initialSecondNodeData = initialOrderedNodes[1]
+    if (!initialSecondNodeData)
+      throw new Error('Expected second node in ordered collection')
+
+    graph.trigger('node:property:changed', {
+      nodeId: String(firstNode.id),
+      property: 'title',
+      newValue: 'first-after'
+    })
+    await nextTick()
+
+    expect(orderedNodes.value).toBe(initialOrderedNodes)
+    expect(orderedNodes.value[1]).toBe(initialSecondNodeData)
+    expect(orderedNodes.value.map((nodeData) => nodeData.id)).toEqual([
+      String(firstNode.id),
+      String(secondNode.id)
+    ])
+    expect(orderedNodesWatcher).not.toHaveBeenCalled()
+  })
+
+  it('keeps the ordered node collection aligned through add/remove bursts', async () => {
+    const graph = new LGraph()
+    const firstNode = new LGraphNode('first')
+    const secondNode = new LGraphNode('second')
+    const thirdNode = new LGraphNode('third')
+    graph.add(firstNode)
+    graph.add(secondNode)
+    graph.add(thirdNode)
+
+    const { vueNodeData } = useGraphNodeManager(graph)
+    const orderedNodeIds = computed(() =>
+      Array.from(vueNodeData.values()).map((nodeData) => nodeData.id)
+    )
+
+    expect(orderedNodeIds.value).toEqual([
+      String(firstNode.id),
+      String(secondNode.id),
+      String(thirdNode.id)
+    ])
+
+    graph.remove(secondNode)
+    await nextTick()
+
+    expect(orderedNodeIds.value).toEqual([
+      String(firstNode.id),
+      String(thirdNode.id)
+    ])
+
+    graph.add(secondNode)
+    await nextTick()
+
+    expect(orderedNodeIds.value).toEqual([
+      String(firstNode.id),
+      String(thirdNode.id),
+      String(secondNode.id)
+    ])
+  })
+
+  it('guards against synchronous same-node onNodeAdded re-entry during bootstrap', () => {
+    const graph = new LGraph()
+    const node = new LGraphNode('reroute')
+    graph.add(node)
+
+    let replayCount = 0
+    graph.onNodeAdded = (addedNode) => {
+      replayCount += 1
+      if (replayCount === 1) {
+        graph.onNodeAdded?.(addedNode)
+      }
+    }
+
+    expect(() => useGraphNodeManager(graph)).not.toThrow()
+
+    expect(replayCount).toBe(1)
   })
 })
 
@@ -396,6 +573,39 @@ describe('Subgraph output slot label reactivity', () => {
 
     const updatedData = vueNodeData.get(nodeId)
     expect(updatedData?.inputs?.[0]?.label).toBe('custom_label')
+  })
+
+  it('does not rebuild the ordered node collection when a slot label changes', async () => {
+    const graph = new LGraph()
+    const firstNode = new LGraphNode('first')
+    firstNode.addOutput('first_output', 'STRING')
+    graph.add(firstNode)
+
+    const secondNode = new LGraphNode('second')
+    secondNode.addOutput('second_output', 'STRING')
+    graph.add(secondNode)
+
+    const { vueNodeData } = useGraphNodeManager(graph)
+    const orderedNodes = computed(() => Array.from(vueNodeData.values()))
+    const orderedNodesWatcher = vi.fn()
+    watch(orderedNodes, orderedNodesWatcher)
+
+    const initialOrderedNodes = orderedNodes.value
+    const initialSecondNodeData = initialOrderedNodes[1]
+    if (!initialSecondNodeData)
+      throw new Error('Expected second node in ordered collection')
+
+    firstNode.outputs[0].label = 'renamed'
+    graph.trigger('node:slot-label:changed', {
+      nodeId: firstNode.id,
+      slotType: NodeSlotType.OUTPUT
+    })
+    await nextTick()
+
+    expect(orderedNodes.value).toBe(initialOrderedNodes)
+    expect(orderedNodes.value[1]).toBe(initialSecondNodeData)
+    expect(orderedNodes.value[0].outputs?.[0]?.label).toBe('renamed')
+    expect(orderedNodesWatcher).not.toHaveBeenCalled()
   })
 
   it('ignores node:slot-label:changed for unknown node ids', () => {

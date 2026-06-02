@@ -201,9 +201,24 @@ export class AppModeHelper {
    * @param inputs - Widget selections as [nodeId, widgetName] tuples
    */
   async enterAppModeWithInputs(inputs: [string, string][]) {
+    const workflowPathBefore = await this.comfyPage.workflow.getActiveWorkflowPath()
+    const openWorkflowCountBefore =
+      await this.comfyPage.workflow.getOpenWorkflowCount()
+
+    if (!workflowPathBefore) {
+      throw new Error('No active workflow path before entering app mode')
+    }
+
     await this.page.evaluate(async (inputTuples) => {
       const graph = window.app!.graph
       if (!graph) return
+
+      const activeWorkflow = (window.app!.extensionManager as {
+        workflow: { activeWorkflow: unknown }
+      }).workflow.activeWorkflow
+      if (!activeWorkflow) {
+        throw new Error('No active workflow while entering app mode')
+      }
 
       const outputNodeIds = graph.nodes
         .filter(
@@ -219,11 +234,32 @@ export class AppModeHelper {
       await window.app!.loadGraphData(
         workflow as unknown as Parameters<
           NonNullable<typeof window.app>['loadGraphData']
-        >[0]
+        >[0],
+        true,
+        true,
+        activeWorkflow as Parameters<
+          NonNullable<typeof window.app>['loadGraphData']
+        >[3]
       )
     }, inputs)
-    await this.comfyPage.nextFrame()
     await this.toggleAppMode()
+    await this.comfyPage.nextFrame()
+
+    const workflowPathAfter = await this.comfyPage.workflow.getActiveWorkflowPath()
+    const openWorkflowCountAfter =
+      await this.comfyPage.workflow.getOpenWorkflowCount()
+
+    if (workflowPathAfter !== workflowPathBefore) {
+      throw new Error(
+        `App mode setup changed workflow path from ${workflowPathBefore} to ${workflowPathAfter}`
+      )
+    }
+
+    if (openWorkflowCountAfter !== openWorkflowCountBefore) {
+      throw new Error(
+        `App mode setup changed workflow tab count from ${openWorkflowCountBefore} to ${openWorkflowCountAfter}`
+      )
+    }
   }
 
   /**

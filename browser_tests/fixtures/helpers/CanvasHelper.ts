@@ -145,7 +145,9 @@ export class CanvasHelper {
 
   async setScale(scale: number): Promise<void> {
     await this.page.evaluate((s) => {
-      window.app!.canvas.ds.scale = s
+      const canvas = window.app!.canvas
+      canvas.ds.scale = s
+      canvas.setDirty(true, true)
     }, scale)
     await nextFrame(this.page)
   }

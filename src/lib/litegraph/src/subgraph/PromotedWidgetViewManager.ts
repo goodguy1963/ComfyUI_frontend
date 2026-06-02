@@ -92,6 +92,10 @@ export class PromotedWidgetViewManager<TView> {
     this.invalidateMemoizedList()
   }
 
+  getViews(): TView[] {
+    return Array.from(this.viewCache.values())
+  }
+
   invalidateMemoizedList(): void {
     this.cachedViews = null
     this.cachedEntryKeys = null

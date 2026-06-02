@@ -1,5 +1,6 @@
 import type { LGraphNode, NodeId } from './LGraphNode'
 import type { LLink, LinkId } from './LLink'
+import type { ISerialisedNode } from './types/serialisation'
 
 /** Generates a unique string key for a link's connection tuple. */
 function linkTupleKey(link: LLink): string {
@@ -78,5 +79,64 @@ export function repairInputLinks(
     if (duplicateIds.has(input.link)) {
       input.link = keepId
     }
+  }
+}
+
+/** Removes links whose origin/target nodes or slots no longer exist. */
+export function purgeInvalidLinks(
+  links: Map<LinkId, LLink>,
+  getNodeById: (id: NodeId) => LGraphNode | null
+): void {
+  for (const [id, link] of links) {
+    const originNode = getNodeById(link.origin_id)
+    const targetNode = getNodeById(link.target_id)
+    const originOutput = originNode?.outputs?.[link.origin_slot]
+    const targetInput = targetNode?.inputs?.[link.target_slot]
+
+    if (originNode && targetNode && originOutput && targetInput) continue
+
+    if (originOutput && originOutput.links) {
+      for (let index = originOutput.links.length - 1; index >= 0; index--) {
+        if (originOutput.links[index] === id) originOutput.links.splice(index, 1)
+      }
+    }
+
+    if (targetInput?.link === id) {
+      targetInput.link = null
+    }
+
+    links.delete(id)
+  }
+}
+
+/**
+ * Removes obviously dangling links from serialized node data before live node
+ * configure callbacks can observe them on a reused graph instance.
+ */
+export function purgeInvalidSerialisedLinks(
+  links: Map<LinkId, LLink>,
+  nodes: readonly Pick<ISerialisedNode, 'id' | 'inputs' | 'outputs'>[]
+): void {
+  const nodeById = new Map(nodes.map((node) => [node.id, node] as const))
+
+  for (const [id, link] of links) {
+    const originNode = nodeById.get(link.origin_id)
+    const targetNode = nodeById.get(link.target_id)
+    const originOutput = originNode?.outputs?.[link.origin_slot]
+    const targetInput = targetNode?.inputs?.[link.target_slot]
+
+    if (originNode && targetNode && originOutput && targetInput) continue
+
+    if (originOutput?.links) {
+      for (let index = originOutput.links.length - 1; index >= 0; index--) {
+        if (originOutput.links[index] === id) originOutput.links.splice(index, 1)
+      }
+    }
+
+    if (targetInput?.link === id) {
+      targetInput.link = null
+    }
+
+    links.delete(id)
   }
 }

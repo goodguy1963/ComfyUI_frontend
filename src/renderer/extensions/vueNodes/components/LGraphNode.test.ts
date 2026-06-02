@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/vue'
 import { setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { computed } from 'vue'
+import type { Directive } from 'vue'
 import type { ComponentProps } from 'vue-component-type-helpers'
 import { createI18n } from 'vue-i18n'
 
@@ -16,7 +17,9 @@ import { app } from '@/scripts/app'
 
 const mockData = vi.hoisted(() => ({
   mockExecuting: false,
-  mockLgraphNode: null as Record<string, unknown> | null
+  mockLatestPreviewUrl: '',
+  mockLgraphNode: null as Record<string, unknown> | null,
+  mockShouldShowPreviewImg: false
 }))
 
 vi.mock('@/utils/graphTraversalUtil', async (importOriginal) => {
@@ -71,7 +74,7 @@ vi.mock('@/composables/useErrorHandling', () => ({
 
 vi.mock('@/renderer/extensions/vueNodes/layout/useNodeLayout', () => ({
   useNodeLayout: () => ({
-    position: { x: 100, y: 50 },
+    position: computed(() => ({ x: 100, y: 50 })),
     size: computed(() => ({ width: 200, height: 100 })),
     zIndex: 0,
     startDrag: vi.fn(),
@@ -96,8 +99,8 @@ vi.mock(
 
 vi.mock('@/renderer/extensions/vueNodes/preview/useNodePreviewState', () => ({
   useNodePreviewState: vi.fn(() => ({
-    latestPreviewUrl: computed(() => ''),
-    shouldShowPreviewImg: computed(() => false)
+    latestPreviewUrl: computed(() => mockData.mockLatestPreviewUrl),
+    shouldShowPreviewImg: computed(() => mockData.mockShouldShowPreviewImg)
   }))
 }))
 
@@ -132,24 +135,74 @@ const pinia = createTestingPinia({
   createSpy: vi.fn
 })
 
+const tooltipDirective: Directive = {
+  mounted() {}
+}
+
 function getNodeRoot(container: Element): HTMLElement {
   return container.firstElementChild as HTMLElement
 }
 
-function renderLGraphNode(props: ComponentProps<typeof LGraphNode>) {
+function renderLGraphNode(
+  props: ComponentProps<typeof LGraphNode>,
+  options?: { stubs?: Record<string, unknown> }
+) {
   return render(LGraphNode, {
     props,
     global: {
       plugins: [pinia, i18n],
+      directives: {
+        tooltip: tooltipDirective
+      },
       stubs: {
         NodeHeader: true,
         NodeSlots: true,
         NodeWidgets: true,
         NodeContent: true,
-        SlotConnectionDot: true
+        SlotConnectionDot: true,
+        ...options?.stubs
       }
     }
   })
+}
+
+function renderLGraphNodeInTransformPane(
+  props: ComponentProps<typeof LGraphNode>,
+  activePanDetail: 'middle' | 'close',
+  options?: { stubs?: Record<string, unknown> }
+) {
+  return render(
+    {
+      components: { LGraphNode },
+      setup() {
+        return {
+          nodeProps: props,
+          activePanDetail
+        }
+      },
+      template: `
+        <div data-testid="transform-pane" :data-active-pan-detail="activePanDetail">
+          <LGraphNode v-bind="nodeProps" :active-pan-detail="activePanDetail" />
+        </div>
+      `
+    },
+    {
+      global: {
+        plugins: [pinia, i18n],
+        directives: {
+          tooltip: tooltipDirective
+        },
+        stubs: {
+          NodeHeader: true,
+          NodeSlots: true,
+          NodeWidgets: true,
+          NodeContent: true,
+          SlotConnectionDot: true,
+          ...options?.stubs
+        }
+      }
+    }
+  )
 }
 const mockNodeData: VueNodeData = {
   id: 'test-node-123',
@@ -172,10 +225,32 @@ const mockRerouteNodeData: VueNodeData = {
   titleMode: TitleMode.NO_TITLE
 }
 
+const nodeHeaderStub = {
+  template: '<div data-testid="node-header-stub" />'
+}
+
+const nodeSlotsStub = {
+  template: '<div data-testid="node-slots-stub" />'
+}
+
+const nodeWidgetsStub = {
+  template: '<div data-testid="node-widgets-stub" />'
+}
+
+const nodeBadgesStub = {
+  template: '<div data-testid="node-badges-stub" />'
+}
+
+const nodeFooterStub = {
+  template: '<div data-testid="node-footer-stub" />'
+}
+
 describe('LGraphNode', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     mockData.mockExecuting = false
+    mockData.mockLatestPreviewUrl = ''
+    mockData.mockShouldShowPreviewImg = false
 
     setActivePinia(pinia)
     const canvasStore = useCanvasStore()
@@ -243,6 +318,187 @@ describe('LGraphNode', () => {
 
     const overlay = screen.getByTestId('node-state-outline-overlay')
     expect(overlay).toHaveClass('border-node-stroke-executing')
+  })
+
+  it('should render live preview when preview state is active', () => {
+    mockData.mockLatestPreviewUrl = 'blob:preview'
+    mockData.mockShouldShowPreviewImg = true
+
+    renderLGraphNode(
+      { nodeData: mockNodeData },
+      {
+        stubs: {
+          LivePreview: {
+            props: ['imageUrl'],
+            template: '<div data-testid="live-preview-stub">{{ imageUrl }}</div>'
+          }
+        }
+      }
+    )
+
+    expect(screen.getByTestId('live-preview-stub')).toHaveTextContent(
+      'blob:preview'
+    )
+  })
+
+  it('hides expensive internals through the transform pane middle motion LOD', () => {
+    mockData.mockLatestPreviewUrl = 'blob:preview'
+    mockData.mockShouldShowPreviewImg = true
+
+    const { container } = renderLGraphNode(
+      {
+        nodeData: {
+          ...mockNodeData,
+          widgets: [{ name: 'strength', type: 'number' }]
+        }
+      },
+      {
+        stubs: {
+          NodeHeader: nodeHeaderStub,
+          NodeSlots: nodeSlotsStub,
+          NodeWidgets: nodeWidgetsStub,
+          NodeBadges: nodeBadgesStub,
+          NodeFooter: nodeFooterStub,
+          LivePreview: {
+            props: ['imageUrl'],
+            template:
+              '<div data-testid="live-preview-stub">{{ imageUrl }}</div>'
+          }
+        }
+      }
+    )
+
+    expect(getNodeRoot(container)).toHaveAttribute('data-motion-lod-eligible')
+  })
+
+  it('prunes expensive internals during middle active pan detail', () => {
+    mockData.mockLatestPreviewUrl = 'blob:preview'
+    mockData.mockShouldShowPreviewImg = true
+
+    const { container } = renderLGraphNodeInTransformPane(
+      {
+        nodeData: {
+          ...mockNodeData,
+          widgets: [{ name: 'strength', type: 'number' }]
+        }
+      },
+      'middle',
+      {
+        stubs: {
+          NodeHeader: nodeHeaderStub,
+          NodeSlots: nodeSlotsStub,
+          NodeWidgets: nodeWidgetsStub,
+          NodeBadges: nodeBadgesStub,
+          NodeFooter: nodeFooterStub,
+          LivePreview: {
+            props: ['imageUrl'],
+            template:
+              '<div data-testid="live-preview-stub">{{ imageUrl }}</div>'
+          }
+        }
+      }
+    )
+
+    const badges = screen.getByTestId('node-badges-stub')
+    const resizeHandle = container.querySelector('[role="button"][aria-label]')
+
+    expect(screen.getByTestId('node-header-stub')).toBeInTheDocument()
+    expect(screen.getByTestId('node-body-test-node-123')).toBeInTheDocument()
+    expect(screen.queryByTestId('node-widgets-stub')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('live-preview-stub')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('node-footer-stub')).not.toBeInTheDocument()
+    expect(badges.parentElement).toHaveClass('node-motion-hide-middle')
+    expect(resizeHandle).not.toBeNull()
+    expect(resizeHandle).toHaveClass('node-motion-hide-middle-close')
+  })
+
+  it('keeps widgets but hides heavier extras during close active pan detail', () => {
+    mockData.mockLatestPreviewUrl = 'blob:preview'
+    mockData.mockShouldShowPreviewImg = true
+
+    const { container } = renderLGraphNodeInTransformPane(
+      {
+        nodeData: {
+          ...mockNodeData,
+          widgets: [{ name: 'strength', type: 'number' }]
+        }
+      },
+      'close',
+      {
+        stubs: {
+          NodeWidgets: nodeWidgetsStub,
+          NodeBadges: nodeBadgesStub,
+          NodeFooter: nodeFooterStub,
+          LivePreview: {
+            props: ['imageUrl'],
+            template:
+              '<div data-testid="live-preview-stub">{{ imageUrl }}</div>'
+          }
+        }
+      }
+    )
+
+    const widgets = screen.getByTestId('node-widgets-stub')
+    const livePreview = screen.getByTestId('live-preview-stub')
+    const badges = screen.getByTestId('node-badges-stub')
+    const footer = screen.getByTestId('node-footer-stub')
+    const resizeHandle = container.querySelector('[role="button"][aria-label]')
+
+    expect(widgets.parentElement).toHaveClass('node-motion-hide-middle-close')
+    expect(livePreview.parentElement).toHaveClass(
+      'node-motion-hide-middle-close'
+    )
+    expect(badges.parentElement).toHaveClass('node-motion-hide-middle')
+    expect(footer.parentElement).toHaveClass('node-motion-hide-middle-close')
+    expect(resizeHandle).not.toBeNull()
+    expect(resizeHandle).toHaveClass('node-motion-hide-middle-close')
+    expect(
+      badges.parentElement?.classList.contains('node-motion-hide-middle-close')
+    ).toBe(false)
+  })
+
+  it('keeps full detail for selected nodes during active pan detail', () => {
+    mockData.mockLatestPreviewUrl = 'blob:preview'
+    mockData.mockShouldShowPreviewImg = true
+
+    const canvasStore = useCanvasStore()
+    canvasStore.selectedNodeIds.add('test-node-123')
+
+    const { container } = renderLGraphNodeInTransformPane(
+      {
+        nodeData: {
+          ...mockNodeData,
+          widgets: [{ name: 'strength', type: 'number' }]
+        }
+      },
+      'middle',
+      {
+        stubs: {
+          NodeWidgets: nodeWidgetsStub,
+          NodeBadges: nodeBadgesStub,
+          NodeFooter: nodeFooterStub,
+          LivePreview: {
+            props: ['imageUrl'],
+            template:
+              '<div data-testid="live-preview-stub">{{ imageUrl }}</div>'
+          }
+        }
+      }
+    )
+
+    const root = getNodeRoot(container)
+    const widgets = screen.getByTestId('node-widgets-stub')
+    const livePreview = screen.getByTestId('live-preview-stub')
+    const badges = screen.getByTestId('node-badges-stub')
+    const footer = screen.getByTestId('node-footer-stub')
+    const resizeHandle = container.querySelector('[role="button"][aria-label]')
+
+    expect(root.hasAttribute('data-motion-lod-eligible')).toBe(false)
+    expect(widgets).toBeInTheDocument()
+    expect(livePreview).toBeInTheDocument()
+    expect(badges).toBeInTheDocument()
+    expect(footer).toBeInTheDocument()
+    expect(resizeHandle).not.toBeNull()
   })
 
   it('should initialize height CSS vars for collapsed nodes', () => {

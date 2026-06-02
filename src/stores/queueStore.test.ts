@@ -679,6 +679,150 @@ describe('useQueueStore', () => {
     })
   })
 
+  describe('update() - active queue reconciliation', () => {
+    it('should reuse running TaskItemImpl and array identity when unchanged', async () => {
+      const runningJob = {
+        ...createRunningJob(10, 'run-1'),
+        workflow_id: 'wf-1'
+      }
+
+      mockGetQueue.mockResolvedValue({ Running: [runningJob], Pending: [] })
+      mockGetHistory.mockResolvedValue([])
+
+      await store.update()
+
+      const initialTask = store.runningTasks[0]
+      const initialRunningTasks = store.runningTasks
+
+      mockGetQueue.mockResolvedValue({
+        Running: [{ ...runningJob }],
+        Pending: []
+      })
+
+      await store.update()
+
+      expect(store.runningTasks[0]).toBe(initialTask)
+      expect(store.runningTasks).toBe(initialRunningTasks)
+    })
+
+    it('should reuse pending TaskItemImpl and array identity when unchanged', async () => {
+      const pendingJob1 = createPendingJob(15, 'pend-1')
+      const pendingJob2 = createPendingJob(14, 'pend-2')
+
+      mockGetQueue.mockResolvedValue({
+        Running: [],
+        Pending: [pendingJob1, pendingJob2]
+      })
+      mockGetHistory.mockResolvedValue([])
+
+      await store.update()
+
+      const initialPendingTasks = store.pendingTasks
+
+      mockGetQueue.mockResolvedValue({
+        Running: [],
+        Pending: [{ ...pendingJob1 }, { ...pendingJob2 }]
+      })
+
+      await store.update()
+
+      expect(store.pendingTasks[0]).toBe(initialPendingTasks[0])
+      expect(store.pendingTasks[1]).toBe(initialPendingTasks[1])
+      expect(store.pendingTasks).toBe(initialPendingTasks)
+    })
+
+    it('should recreate running TaskItemImpl when preview_output changes', async () => {
+      const runningJob = createRunningJob(10, 'run-1')
+
+      mockGetQueue.mockResolvedValue({ Running: [runningJob], Pending: [] })
+      mockGetHistory.mockResolvedValue([])
+
+      await store.update()
+
+      const initialTask = store.runningTasks[0]
+      expect(initialTask.previewOutput).toBeUndefined()
+
+      mockGetQueue.mockResolvedValue({
+        Running: [
+          {
+            ...runningJob,
+            preview_output: {
+              nodeId: 'node-1',
+              mediaType: 'images',
+              filename: 'preview.png',
+              subfolder: '',
+              type: 'output'
+            }
+          }
+        ],
+        Pending: []
+      })
+
+      await store.update()
+
+      expect(store.runningTasks[0]).not.toBe(initialTask)
+      expect(store.runningTasks[0].previewOutput?.filename).toBe('preview.png')
+    })
+
+    it('should reuse unchanged queue and history items when one running job moves into history', async () => {
+      const runningJob1 = {
+        ...createRunningJob(30, 'run-1'),
+        workflow_id: 'wf-1'
+      }
+      const runningJob2 = {
+        ...createRunningJob(29, 'run-2'),
+        workflow_id: 'wf-2'
+      }
+      const pendingJob = createPendingJob(28, 'pend-1')
+      const existingHistoryJob = {
+        ...createHistoryJob(10, 'hist-1'),
+        outputs_count: 1
+      }
+
+      mockGetQueue.mockResolvedValue({
+        Running: [runningJob1, runningJob2],
+        Pending: [pendingJob]
+      })
+      mockGetHistory.mockResolvedValue([existingHistoryJob])
+
+      await store.update()
+
+      const initialRunningTask1 = store.runningTasks[0]
+      const initialRunningTask2 = store.runningTasks[1]
+      const initialPendingTasks = store.pendingTasks
+      const initialHistoryTasks = store.historyTasks
+      const initialHistoryTask = store.historyTasks[0]
+
+      mockGetQueue.mockResolvedValue({
+        Running: [{ ...runningJob2 }],
+        Pending: [{ ...pendingJob }]
+      })
+      mockGetHistory.mockResolvedValue([
+        {
+          ...createHistoryJob(30, 'run-1'),
+          workflow_id: 'wf-1',
+          outputs_count: 2
+        },
+        { ...existingHistoryJob }
+      ])
+
+      await store.update()
+
+      expect(store.runningTasks).toHaveLength(1)
+      expect(store.runningTasks).not.toContain(initialRunningTask1)
+      expect(store.runningTasks[0]).toBe(initialRunningTask2)
+
+      expect(store.pendingTasks).toBe(initialPendingTasks)
+      expect(store.pendingTasks[0]).toBe(initialPendingTasks[0])
+
+      expect(store.historyTasks).toHaveLength(2)
+      expect(store.historyTasks).not.toBe(initialHistoryTasks)
+      expect(store.historyTasks[0].jobId).toBe('run-1')
+      expect(store.historyTasks[0]).not.toBe(initialRunningTask1)
+      expect(store.historyTasks[1]).toBe(initialHistoryTask)
+    })
+  })
+
   describe('update() - maxHistoryItems limit', () => {
     it('should enforce maxHistoryItems limit', async () => {
       store.maxHistoryItems = 3

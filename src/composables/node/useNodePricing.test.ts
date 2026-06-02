@@ -51,6 +51,7 @@ const shouldShowDecimal = (value: number): boolean => {
 const creditValue = (usd: number): string => {
   const rawCredits = usd * CREDITS_PER_USD
   return formatCredits({
+    locale: 'en-US',
     value: rawCredits,
     numberOptions: {
       minimumFractionDigits: 0,

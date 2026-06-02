@@ -97,4 +97,32 @@ describe('PromotedWidgetView — host-wins semantics', () => {
     )
     expect(interiorState?.value).toBe(42)
   })
+
+  it('does not overflow when linked-input inspection re-enters the same promoted view', () => {
+    const subgraph = createTestSubgraph({
+      inputs: [{ name: 'value', type: 'number' }]
+    })
+    const { node: interior, widget: interiorWidget } =
+      createNumericInteriorNode(42)
+    subgraph.add(interior)
+    subgraph.inputNode.slots[0].connect(interior.inputs[0], interior)
+
+    const host = createTestSubgraphNode(subgraph, { id: 300 })
+    const view = host.widgets.find(isPromotedWidgetView)
+    if (!view) throw new Error('Expected promoted view on host')
+
+    const linkedInputSlot = host.inputs[0]?._subgraphSlot
+    if (!linkedInputSlot)
+      throw new Error('Expected connected-widget lookup on host input slot')
+    const connectedWidgets = linkedInputSlot.getConnectedWidgets
+
+    linkedInputSlot.getConnectedWidgets = () => {
+      void view.value
+      return [interiorWidget]
+    }
+
+    expect(view.value).toBe(42)
+
+    linkedInputSlot.getConnectedWidgets = connectedWidgets
+  })
 })

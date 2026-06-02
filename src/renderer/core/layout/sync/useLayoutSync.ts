@@ -28,6 +28,9 @@ export function useLayoutSync() {
     isMicrotaskQueued = false
     if (!canvas?.graph || pendingNodeIds.size === 0) return
 
+    let didMoveNode = false
+    let didResizeNode = false
+
     for (const nodeId of pendingNodeIds) {
       const layout = layoutStore.getNodeLayoutRef(nodeId).value
       if (!layout) continue
@@ -41,6 +44,7 @@ export function useLayoutSync() {
       ) {
         liteNode.pos[0] = layout.position.x
         liteNode.pos[1] = layout.position.y
+        didMoveNode = true
       }
 
       // Note: layout.size.height is the content height without title.
@@ -56,11 +60,19 @@ export function useLayoutSync() {
         liteNode.size[0] = layout.size.width
         liteNode.size[1] = layout.size.height
         liteNode.onResize?.(liteNode.size)
+        didResizeNode = true
       }
     }
 
     pendingNodeIds.clear()
-    canvas.setDirty(true, true)
+    if (didResizeNode) {
+      canvas.setDirty(true, true)
+      return
+    }
+
+    if (didMoveNode) {
+      canvas.setDirty(false, true)
+    }
   }
 
   function scheduleFlush(

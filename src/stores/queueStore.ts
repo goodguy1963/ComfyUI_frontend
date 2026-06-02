@@ -475,6 +475,84 @@ export class TaskItemImpl {
   }
 }
 
+const normalizeOptional = <T>(value: T | null | undefined): T | undefined =>
+  value ?? undefined
+
+const areSerializedValuesEqual = (left: unknown, right: unknown): boolean => {
+  if (left === right) return true
+
+  const normalizedLeft = normalizeOptional(left)
+  const normalizedRight = normalizeOptional(right)
+  if (normalizedLeft === undefined || normalizedRight === undefined) {
+    return normalizedLeft === normalizedRight
+  }
+
+  return JSON.stringify(normalizedLeft) === JSON.stringify(normalizedRight)
+}
+
+const canReuseTaskItem = (
+  existing: TaskItemImpl | undefined,
+  job: JobListItem
+): existing is TaskItemImpl => {
+  if (!existing) return false
+
+  const currentJob = existing.job
+  return (
+    currentJob.id === job.id &&
+    currentJob.status === job.status &&
+    currentJob.create_time === job.create_time &&
+    currentJob.priority === job.priority &&
+    normalizeOptional(currentJob.execution_start_time) ===
+      normalizeOptional(job.execution_start_time) &&
+    normalizeOptional(currentJob.execution_end_time) ===
+      normalizeOptional(job.execution_end_time) &&
+    normalizeOptional(currentJob.outputs_count) ===
+      normalizeOptional(job.outputs_count) &&
+    normalizeOptional(currentJob.workflow_id) ===
+      normalizeOptional(job.workflow_id) &&
+    areSerializedValuesEqual(currentJob.preview_output, job.preview_output) &&
+    areSerializedValuesEqual(currentJob.execution_error, job.execution_error)
+  )
+}
+
+const reconcileTaskList = (
+  currentTasks: readonly TaskItemImpl[],
+  jobs: readonly JobListItem[]
+): TaskItemImpl[] => {
+  const existingByJobId = new Map(currentTasks.map((task) => [task.jobId, task]))
+  const nextTasks = jobs.map((job) => {
+    const existing = existingByJobId.get(job.id)
+    return canReuseTaskItem(existing, job) ? existing : new TaskItemImpl(job)
+  })
+
+  const isUnchanged =
+    nextTasks.length === currentTasks.length &&
+    nextTasks.every((task, index) => task === currentTasks[index])
+
+  return isUnchanged ? (currentTasks as TaskItemImpl[]) : nextTasks
+}
+
+const sortHistoryJobs = (
+  history: readonly JobListItem[],
+  maxItems: number
+): readonly JobListItem[] => {
+  if (maxItems <= 0 || history.length === 0) {
+    return []
+  }
+
+  const alreadySorted = history.every(
+    (job, index) => index === 0 || history[index - 1].create_time >= job.create_time
+  )
+
+  if (alreadySorted) {
+    return history.length > maxItems ? history.slice(0, maxItems) : history
+  }
+
+  return [...history]
+    .sort((a, b) => b.create_time - a.create_time)
+    .slice(0, maxItems)
+}
+
 export const useQueueStore = defineStore('queue', () => {
   // Use shallowRef because TaskItemImpl instances are immutable and arrays are
   // replaced entirely (not mutated), so deep reactivity would waste performance
@@ -533,10 +611,30 @@ export const useQueueStore = defineStore('queue', () => {
       if (queueResult.status === 'fulfilled') {
         const queue = queueResult.value
         // API returns pre-sorted data (sort_by=create_time&order=desc)
-        runningTasks.value = queue.Running.map((job) => new TaskItemImpl(job))
-        pendingTasks.value = queue.Pending.map((job) => new TaskItemImpl(job))
+        const nextRunningTasks = reconcileTaskList(
+          runningTasks.value,
+          queue.Running
+        )
+        const nextPendingTasks = reconcileTaskList(
+          pendingTasks.value,
+          queue.Pending
+        )
 
-        const appearedTasks = [...pendingTasks.value, ...runningTasks.value]
+        if (
+          nextRunningTasks.length !== runningTasks.value.length ||
+          nextRunningTasks.some((task, index) => task !== runningTasks.value[index])
+        ) {
+          runningTasks.value = nextRunningTasks
+        }
+
+        if (
+          nextPendingTasks.length !== pendingTasks.value.length ||
+          nextPendingTasks.some((task, index) => task !== pendingTasks.value[index])
+        ) {
+          pendingTasks.value = nextPendingTasks
+        }
+
+        const appearedTasks = [...nextPendingTasks, ...nextRunningTasks]
         const executionStore = useExecutionStore()
         appearedTasks.forEach((task) => {
           const jobIdString = String(task.jobId)
@@ -558,27 +656,8 @@ export const useQueueStore = defineStore('queue', () => {
       if (historyResult.status === 'fulfilled') {
         const history = historyResult.value
         const currentHistory = toValue(historyTasks)
-
-        // Sort by create_time descending and limit to maxItems
-        const sortedHistory = [...history]
-          .sort((a, b) => b.create_time - a.create_time)
-          .slice(0, toValue(maxHistoryItems))
-
-        // Reuse existing TaskItemImpl instances or create new
-        // Must recreate if outputs_count changed (e.g., API started returning it)
-        const existingByJobId = new Map(
-          currentHistory.map((impl) => [impl.jobId, impl])
-        )
-
-        const nextHistoryTasks = sortedHistory.map((job) => {
-          const existing = existingByJobId.get(job.id)
-          if (!existing) return new TaskItemImpl(job)
-          // Recreate if outputs_count changed to ensure lazy loading works
-          if (existing.outputsCount !== (job.outputs_count ?? undefined)) {
-            return new TaskItemImpl(job)
-          }
-          return existing
-        })
+        const sortedHistory = sortHistoryJobs(history, toValue(maxHistoryItems))
+        const nextHistoryTasks = reconcileTaskList(currentHistory, sortedHistory)
 
         const isHistoryUnchanged =
           nextHistoryTasks.length === currentHistory.length &&

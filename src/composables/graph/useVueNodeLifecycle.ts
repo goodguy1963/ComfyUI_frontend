@@ -4,31 +4,37 @@ import { shallowRef, watch } from 'vue'
 import { useGraphNodeManager } from '@/composables/graph/useGraphNodeManager'
 import type { GraphNodeManager } from '@/composables/graph/useGraphNodeManager'
 import { useVueFeatureFlags } from '@/composables/useVueFeatureFlags'
-import type { LGraphNode } from '@/lib/litegraph/src/litegraph'
+import { useWorkflowStore } from '@/platform/workflow/management/stores/workflowStore'
+import type { LGraph, LGraphNode, Subgraph } from '@/lib/litegraph/src/litegraph'
 import { useCanvasStore } from '@/renderer/core/canvas/canvasStore'
 import { useLayoutMutations } from '@/renderer/core/layout/operations/layoutMutations'
 import { layoutStore } from '@/renderer/core/layout/store/layoutStore'
 import { useLayoutSync } from '@/renderer/core/layout/sync/useLayoutSync'
 import { app as comfyApp } from '@/scripts/app'
 
+type ActiveGraph = LGraph | Subgraph
+
+interface CachedGraphState {
+  graph: ActiveGraph
+  manager: GraphNodeManager | null
+  workflowPath: string | null
+  removeEmptyGraphListener?: () => void
+}
+
 function useVueNodeLifecycleIndividual() {
   const canvasStore = useCanvasStore()
+  const workflowStore = useWorkflowStore()
   const layoutMutations = useLayoutMutations()
   const { shouldRenderVueNodes } = useVueFeatureFlags()
   const nodeManager = shallowRef<GraphNodeManager | null>(null)
+  const activeGraph = shallowRef<ActiveGraph | null>(null)
+  const graphStateCache = new Map<ActiveGraph, CachedGraphState>()
   const { startSync, stopSync } = useLayoutSync()
 
-  const initializeNodeManager = () => {
-    // Use canvas graph if available (handles subgraph contexts), fallback to app graph
-    const activeGraph = comfyApp.canvas?.graph
-    if (!activeGraph || nodeManager.value) return
+  const getActiveWorkflowPath = () => workflowStore.activeWorkflow?.path ?? null
 
-    // Initialize the core node manager
-    const manager = useGraphNodeManager(activeGraph)
-    nodeManager.value = manager
-
-    // Initialize layout system with existing nodes from active graph
-    const nodes = activeGraph._nodes.map((node: LGraphNode) => ({
+  const seedLayoutFromGraph = (graph: ActiveGraph) => {
+    const nodes = graph._nodes.map((node: LGraphNode) => ({
       id: node.id.toString(),
       pos: [node.pos[0], node.pos[1]] as [number, number],
       size: [node.size[0], node.size[1]] as [number, number]
@@ -36,7 +42,7 @@ function useVueNodeLifecycleIndividual() {
     layoutStore.initializeFromLiteGraph(nodes)
 
     // Seed reroutes into the Layout Store so hit-testing uses the new path
-    for (const reroute of activeGraph.reroutes.values()) {
+    for (const reroute of graph.reroutes.values()) {
       const [x, y] = reroute.pos
       const parent = reroute.parentId ?? undefined
       const linkIds = Array.from(reroute.linkIds)
@@ -44,7 +50,7 @@ function useVueNodeLifecycleIndividual() {
     }
 
     // Seed existing links into the Layout Store (topology only)
-    for (const link of activeGraph._links.values()) {
+    for (const link of graph._links.values()) {
       layoutMutations.createLink(
         link.id,
         link.origin_id,
@@ -53,22 +59,132 @@ function useVueNodeLifecycleIndividual() {
         link.target_slot
       )
     }
+  }
+
+  const deactivateActiveGraph = () => {
+    stopSync()
+    activeGraph.value = null
+    nodeManager.value = null
+  }
+
+  const clearEmptyGraphListener = (state: CachedGraphState) => {
+    state.removeEmptyGraphListener?.()
+    state.removeEmptyGraphListener = undefined
+  }
+
+  const cleanupCachedGraphState = (graph: ActiveGraph) => {
+    const state = graphStateCache.get(graph)
+    if (!state) return
+
+    clearEmptyGraphListener(state)
+
+    try {
+      state.manager?.cleanup()
+    } catch {
+      /* empty */
+    }
+
+    if (activeGraph.value === graph) {
+      deactivateActiveGraph()
+    }
+
+    graphStateCache.delete(graph)
+  }
+
+  const getOrCreateGraphState = (graph: ActiveGraph) => {
+    const workflowPath = getActiveWorkflowPath()
+    const existingState = graphStateCache.get(graph)
+
+    if (existingState && existingState.workflowPath !== workflowPath) {
+      cleanupCachedGraphState(graph)
+    }
+
+    const nextState = graphStateCache.get(graph)
+    if (nextState) return nextState
+
+    const createdState: CachedGraphState = {
+      graph,
+      manager: null,
+      workflowPath
+    }
+    graphStateCache.set(graph, createdState)
+    return createdState
+  }
+
+  const activateGraphState = (state: CachedGraphState) => {
+    const isGraphSwitch = activeGraph.value !== state.graph
+    if (isGraphSwitch) {
+      stopSync()
+      layoutStore.clearAllSlotLayouts()
+    }
+
+    activeGraph.value = state.graph
+    nodeManager.value = state.manager
+    seedLayoutFromGraph(state.graph)
 
     // Start sync AFTER seeding so bootstrap operations don't trigger
     // the Layout→LiteGraph writeback loop redundantly.
     startSync(canvasStore.canvas)
   }
 
-  const disposeNodeManagerAndSyncs = () => {
-    stopSync()
-    if (!nodeManager.value) return
-
-    try {
-      nodeManager.value.cleanup()
-    } catch {
-      /* empty */
+  const ensureEmptyGraphListener = (state: CachedGraphState) => {
+    if (
+      state.removeEmptyGraphListener ||
+      state.manager ||
+      state.graph._nodes.length !== 0
+    ) {
+      return
     }
-    nodeManager.value = null
+
+    const originalOnNodeAdded = state.graph.onNodeAdded
+    const emptyGraphListener = function (this: unknown, node: LGraphNode) {
+      clearEmptyGraphListener(state)
+
+      if (shouldRenderVueNodes.value && !state.manager) {
+        state.manager = useGraphNodeManager(state.graph)
+      }
+
+      if (originalOnNodeAdded) {
+        originalOnNodeAdded.call(this, node)
+      }
+
+      if (comfyApp.canvas?.graph === state.graph && state.manager) {
+        activateGraphState(state)
+      }
+    }
+
+    state.graph.onNodeAdded = emptyGraphListener
+    state.removeEmptyGraphListener = () => {
+      if (state.graph.onNodeAdded === emptyGraphListener) {
+        state.graph.onNodeAdded = originalOnNodeAdded
+      }
+    }
+  }
+
+  const initializeNodeManager = () => {
+    const currentGraph = comfyApp.canvas?.graph
+    if (!currentGraph) return
+
+    const state = getOrCreateGraphState(currentGraph)
+
+    if (currentGraph._nodes.length === 0) {
+      deactivateActiveGraph()
+      activeGraph.value = currentGraph
+      layoutStore.initializeFromLiteGraph([])
+      ensureEmptyGraphListener(state)
+      return
+    }
+
+    clearEmptyGraphListener(state)
+    if (!state.manager) {
+      state.manager = useGraphNodeManager(currentGraph)
+    }
+
+    activateGraphState(state)
+  }
+
+  const disposeNodeManagerAndSyncs = () => {
+    deactivateActiveGraph()
   }
 
   // Watch for Vue nodes enabled state changes
@@ -85,7 +201,11 @@ function useVueNodeLifecycleIndividual() {
   whenever(
     () => !shouldRenderVueNodes.value,
     () => {
-      disposeNodeManagerAndSyncs()
+      deactivateActiveGraph()
+
+      for (const graph of Array.from(graphStateCache.keys())) {
+        cleanupCachedGraphState(graph)
+      }
 
       // Force arrange() on all nodes so input.pos is computed before
       // the first legacy drawConnections frame (which may run before
@@ -116,38 +236,33 @@ function useVueNodeLifecycleIndividual() {
     }
   )
 
-  // Handle case where Vue nodes are enabled but graph starts empty
   const setupEmptyGraphListener = () => {
-    const activeGraph = comfyApp.canvas?.graph
-    if (
-      !shouldRenderVueNodes.value ||
-      nodeManager.value ||
-      activeGraph?._nodes.length !== 0
-    ) {
-      return
-    }
-    const originalOnNodeAdded = activeGraph.onNodeAdded
-    activeGraph.onNodeAdded = function (node: LGraphNode) {
-      // Restore original handler
-      activeGraph.onNodeAdded = originalOnNodeAdded
+    const currentGraph = comfyApp.canvas?.graph
+    if (!currentGraph) return
 
-      // Initialize node manager if needed
-      if (shouldRenderVueNodes.value && !nodeManager.value) {
-        initializeNodeManager()
-      }
-
-      // Call original handler
-      if (originalOnNodeAdded) {
-        originalOnNodeAdded.call(this, node)
-      }
-    }
+    const state = getOrCreateGraphState(currentGraph)
+    ensureEmptyGraphListener(state)
   }
+
+  watch(
+    () => workflowStore.openWorkflows.map((workflow) => workflow.path),
+    (openWorkflowPaths) => {
+      const openPathSet = new Set(openWorkflowPaths)
+
+      for (const [graph, state] of graphStateCache) {
+        if (state.workflowPath && !openPathSet.has(state.workflowPath)) {
+          cleanupCachedGraphState(graph)
+        }
+      }
+    },
+    { immediate: true }
+  )
 
   // Cleanup function for component unmounting
   const cleanup = () => {
-    if (nodeManager.value) {
-      nodeManager.value.cleanup()
-      nodeManager.value = null
+    deactivateActiveGraph()
+    for (const graph of Array.from(graphStateCache.keys())) {
+      cleanupCachedGraphState(graph)
     }
   }
 

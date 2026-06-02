@@ -62,6 +62,9 @@
   <TransformPane
     v-if="shouldRenderVueNodes && comfyApp.canvas && comfyAppReady"
     :canvas="comfyApp.canvas"
+    :active-pan-detail="activePanDetailLevel"
+    :is-middle-panning="isMiddleCanvasPanning"
+    :pan-fallback-detail="middlePanFallbackDetail"
     @wheel.capture="canvasInteractions.forwardEventToCanvas"
     @pointerdown.capture="forwardPointerDownPanEvent"
     @pointerup.capture="forwardPointerUpPanEvent"
@@ -69,9 +72,10 @@
   >
     <!-- Vue nodes rendered based on graph nodes -->
     <LGraphNode
-      v-for="nodeData in allNodes"
+      v-for="nodeData in mountedNodes"
       :key="nodeData.id"
       :node-data="nodeData"
+      :active-pan-detail="activePanDetailLevel"
       :error="
         executionErrorStore.lastExecutionError?.node_id === nodeData.id
           ? 'Execution error'
@@ -107,7 +111,7 @@
 </template>
 
 <script setup lang="ts">
-import { until, useEventListener } from '@vueuse/core'
+import { until, useElementSize, useEventListener, useRafFn } from '@vueuse/core'
 import {
   computed,
   nextTick,
@@ -133,6 +137,12 @@ import VueNodeSwitchPopup from '@/components/builder/VueNodeSwitchPopup.vue'
 import ExtensionSlot from '@/components/common/ExtensionSlot.vue'
 import DomWidgets from '@/components/graph/DomWidgets.vue'
 import GraphCanvasMenu from '@/components/graph/GraphCanvasMenu.vue'
+import {
+  getOrderedMountedVueNodes,
+  getViewportNodeIdsWithLiteGraphFallback,
+  getVueNodeViewportBounds,
+  VUE_NODE_VIEWPORT_OVERSCAN
+} from '@/components/graph/viewportMountedNodes'
 import LinkOverlayCanvas from '@/components/graph/LinkOverlayCanvas.vue'
 import NodeTooltip from '@/components/graph/NodeTooltip.vue'
 import NodeContextMenu from '@/components/graph/NodeContextMenu.vue'
@@ -168,9 +178,14 @@ import { useCanvasStore } from '@/renderer/core/canvas/canvasStore'
 import { useCanvasInteractions } from '@/renderer/core/canvas/useCanvasInteractions'
 import { layoutStore } from '@/renderer/core/layout/store/layoutStore'
 import TransformPane from '@/renderer/core/layout/transform/TransformPane.vue'
+import { useTransformSettling } from '@/renderer/core/layout/transform/useTransformSettling'
+import { useTransformState } from '@/renderer/core/layout/transform/useTransformState'
 import MiniMap from '@/renderer/extensions/minimap/MiniMap.vue'
 import LGraphNode from '@/renderer/extensions/vueNodes/components/LGraphNode.vue'
-import { requestSlotLayoutSyncForAllNodes } from '@/renderer/extensions/vueNodes/composables/useSlotElementTracking'
+import {
+  flushPanDeferredSlotLayoutSyncs,
+  requestSlotLayoutSyncForAllNodes
+} from '@/renderer/extensions/vueNodes/composables/useSlotElementTracking'
 import { UnauthorizedError } from '@/scripts/api'
 import { app as comfyApp } from '@/scripts/app'
 import { ChangeTracker } from '@/scripts/changeTracker'
@@ -202,6 +217,7 @@ const emit = defineEmits<{
   ready: []
 }>()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
+const { width: viewportWidth, height: viewportHeight } = useElementSize(canvasRef)
 const nodeSearchboxPopoverRef = shallowRef<InstanceType<
   typeof NodeSearchboxPopover
 > | null>(null)
@@ -218,10 +234,39 @@ const toastStore = useToastStore()
 const colorPaletteStore = useColorPaletteStore()
 const colorPaletteService = useColorPaletteService()
 const canvasInteractions = useCanvasInteractions()
+const { getViewportBounds, camera } = useTransformState()
 const bootstrapStore = useBootstrapStore()
 const { isI18nReady, i18nError } = storeToRefs(bootstrapStore)
 const { isReady: isSettingsReady, error: settingsError } =
   storeToRefs(settingStore)
+const { isTransforming: isCanvasTransforming } = useTransformSettling(canvasRef, {
+  settleDelay: 96
+})
+const isMiddleCanvasPanning = ref(false)
+
+const STABLE_LOW_DETAIL_SCALE = 0.12
+const ACTIVE_PAN_MIDDLE_DETAIL_SCALE = 0.35
+const ACTIVE_PAN_CLOSE_DETAIL_SCALE = 0.65
+const ENABLE_MIDDLE_PAN_DOM_SNAPSHOT_FALLBACK = false
+
+type ActivePanDetailLevel = 'none' | 'middle' | 'close'
+
+const activePanDetailLevel = computed<ActivePanDetailLevel>(() => {
+  if (!isCanvasTransforming.value) return 'none'
+  if (camera.z <= STABLE_LOW_DETAIL_SCALE) return 'none'
+  if (camera.z <= ACTIVE_PAN_MIDDLE_DETAIL_SCALE) return 'middle'
+  if (camera.z <= ACTIVE_PAN_CLOSE_DETAIL_SCALE) return 'close'
+  return 'none'
+})
+
+const middlePanFallbackDetail = computed<ActivePanDetailLevel>(() => {
+  if (!ENABLE_MIDDLE_PAN_DOM_SNAPSHOT_FALLBACK) return 'none'
+  if (!isMiddleCanvasPanning.value) return 'none'
+  if (camera.z <= STABLE_LOW_DETAIL_SCALE) return 'none'
+  if (camera.z <= ACTIVE_PAN_MIDDLE_DETAIL_SCALE) return 'middle'
+  if (camera.z <= ACTIVE_PAN_CLOSE_DETAIL_SCALE) return 'close'
+  return 'none'
+})
 
 const betaMenuEnabled = computed(
   () => settingStore.get('Comfy.UseNewMenu') !== 'Disabled'
@@ -263,13 +308,23 @@ watch(
 
 const handleVueNodeLifecycleReset = async () => {
   if (shouldRenderVueNodes.value) {
-    vueNodeLifecycle.disposeNodeManagerAndSyncs()
     await nextTick()
     vueNodeLifecycle.initializeNodeManager()
   }
 }
 
 watch(() => canvasStore.currentGraph, handleVueNodeLifecycleReset)
+
+watch(
+  () => workflowStore.activeWorkflow?.path,
+  (path, previousPath) => {
+    if (!shouldRenderVueNodes.value || !previousPath || path === previousPath) {
+      return
+    }
+
+    executionStore.suppressNodeProgressVisuals()
+  }
+)
 
 watch(
   () => canvasStore.isInSubgraph,
@@ -284,6 +339,135 @@ watch(
 const allNodes = computed((): VueNodeData[] =>
   Array.from(vueNodeLifecycle.nodeManager.value?.vueNodeData?.values() ?? [])
 )
+const focusedVueNodeId = ref<string | null>(null)
+const centeredVueNodeId = ref<string | null>(null)
+
+const updateFocusedVueNodeId = () => {
+  const activeNode = document.activeElement?.closest<HTMLElement>('[data-node-id]')
+  focusedVueNodeId.value = activeNode?.dataset.nodeId ?? null
+}
+
+const getLiteGraphNodeBounds = (nodeId: string) => {
+  const node = comfyApp.canvas?.graph?.getNodeById(nodeId)
+  if (!node?.pos || !node?.size) return null
+
+  return {
+    x: node.pos[0],
+    y: node.pos[1],
+    width: node.size[0],
+    height: node.size[1]
+  }
+}
+
+const getLiteGraphVisibleBounds = (overscan: number) => {
+  const visibleArea = comfyApp.canvas?.visible_area
+  if (!visibleArea) return null
+
+  const [x, y, width, height] = visibleArea
+  if (![x, y, width, height].every(Number.isFinite)) return null
+
+  const overscanX = width * overscan
+  const overscanY = height * overscan
+
+  return {
+    x: x - overscanX,
+    y: y - overscanY,
+    width: width + overscanX * 2,
+    height: height + overscanY * 2
+  }
+}
+
+const viewportNodeIds = computed((): string[] | null => {
+  const orderedNodes = allNodes.value
+  if (!orderedNodes.length) return []
+
+  const width = viewportWidth.value
+  const height = viewportHeight.value
+  if (!width || !height) return null
+
+  const viewportBounds = getViewportBounds(
+    { width, height },
+    VUE_NODE_VIEWPORT_OVERSCAN
+  )
+  const { spatialQueryBounds, fallbackBounds } = getVueNodeViewportBounds(
+    viewportBounds,
+    getLiteGraphVisibleBounds(VUE_NODE_VIEWPORT_OVERSCAN)
+  )
+
+  return getViewportNodeIdsWithLiteGraphFallback(
+    orderedNodes,
+    layoutStore.queryNodesInBounds(spatialQueryBounds).map(String),
+    fallbackBounds,
+    getLiteGraphNodeBounds,
+    comfyApp.canvas?.visible_nodes.map((node) => String(node.id))
+  )
+})
+
+const stickyVueNodeIds = computed(() => {
+  const stickyNodeIds: string[] = []
+
+  if (focusedVueNodeId.value) {
+    stickyNodeIds.push(focusedVueNodeId.value)
+  }
+
+  if (centeredVueNodeId.value) {
+    stickyNodeIds.push(centeredVueNodeId.value)
+  }
+
+  return stickyNodeIds
+})
+
+watch(
+  viewportNodeIds,
+  (visibleNodeIds) => {
+    if (!visibleNodeIds || !centeredVueNodeId.value) {
+      return
+    }
+
+    if (visibleNodeIds.includes(centeredVueNodeId.value)) {
+      centeredVueNodeId.value = null
+    }
+  },
+  { flush: 'post' }
+)
+
+const mountedNodes = computed((): VueNodeData[] => {
+  const orderedNodes = allNodes.value
+  if (!orderedNodes.length) return orderedNodes
+
+  const visibleNodeIds = viewportNodeIds.value
+  if (!visibleNodeIds) return orderedNodes
+
+  return getOrderedMountedVueNodes(
+    orderedNodes,
+    visibleNodeIds,
+    stickyVueNodeIds.value
+  )
+})
+
+useEventListener(document, 'focusin', updateFocusedVueNodeId, {
+  capture: true
+})
+useEventListener(
+  document,
+  'focusout',
+  () => {
+    queueMicrotask(updateFocusedVueNodeId)
+  },
+  { capture: true }
+)
+useEventListener(
+  canvasRef,
+  'litegraph:center-on-node',
+  (event: Event) => {
+    const nodeId = (event as CustomEvent<{ nodeId: string | number }>).detail
+      ?.nodeId
+
+    centeredVueNodeId.value = nodeId == null ? null : String(nodeId)
+  },
+  { passive: true }
+)
+
 watch(
   () => linearMode.value,
   (isLinearMode) => {
@@ -411,18 +595,46 @@ watch(
     [
       executionStore.nodeLocationProgressStates,
       canvasStore.canvas,
-      canvasStore.currentGraph
+      canvasStore.currentGraph,
+      shouldRenderVueNodes.value
     ] as const,
-  ([nodeLocationProgressStates, canvas]) => {
+  ([nodeLocationProgressStates, canvas, _graph, renderVueNodes]) => {
     if (!canvas?.graph) return
-    for (const node of canvas.graph.nodes) {
-      const nodeLocatorId = useWorkflowStore().nodeIdToNodeLocatorId(node.id)
-      const progressState = nodeLocationProgressStates[nodeLocatorId]
-      if (progressState && progressState.state === 'running') {
-        node.progress = progressState.value / progressState.max
-      } else {
-        node.progress = undefined
+
+    let didChangeProgress = false
+
+    if (renderVueNodes) {
+      for (const node of canvas.graph.nodes) {
+        if (node.progress !== undefined) {
+          node.progress = undefined
+          didChangeProgress = true
+        }
       }
+
+      if (didChangeProgress) {
+        canvas.setDirty(true, false)
+      }
+      return
+    }
+
+    for (const node of canvas.graph.nodes) {
+      const nodeLocatorId = workflowStore.nodeIdToNodeLocatorId(node.id)
+      const progressState = nodeLocationProgressStates[nodeLocatorId]
+      const nextProgress =
+        progressState && progressState.state === 'running'
+          ? progressState.value / progressState.max
+          : undefined
+
+      if (node.progress === nextProgress) {
+        continue
+      }
+
+      node.progress = nextProgress
+      didChangeProgress = true
+    }
+
+    if (!didChangeProgress) {
+      return
     }
 
     // Force canvas redraw to ensure progress updates are visible
@@ -597,6 +809,23 @@ onUnmounted(() => {
   cleanupErrorHooks = null
   vueNodeLifecycle.cleanup()
 })
+
+useRafFn(() => {
+  const canvas = comfyApp.canvas
+  const middleCanvasPanActive =
+    !!canvas?.dragging_canvas &&
+    canvas.pointer.isDown &&
+    canvas.pointer.eDown?.button === 1
+
+  if (isMiddleCanvasPanning.value !== middleCanvasPanActive) {
+    if (isMiddleCanvasPanning.value && !middleCanvasPanActive) {
+      canvas?.setDirty(false, true)
+      window.setTimeout(flushPanDeferredSlotLayoutSyncs, 120)
+    }
+    isMiddleCanvasPanning.value = middleCanvasPanActive
+  }
+})
+
 function forwardPointerDownPanEvent(e: PointerEvent) {
   forwardPanEvent(e, isMiddlePointerInput)
 }
@@ -613,10 +842,11 @@ function forwardPanEvent(
   e: PointerEvent,
   isMiddleInput: (event: PointerEvent) => boolean
 ) {
-  if (!isMiddleInput(e)) return
+  if (!isMiddleInput(e)) return false
   if (shouldIgnoreCopyPaste(e.target) && document.activeElement === e.target)
-    return
+    return false
 
   canvasInteractions.forwardEventToCanvas(e)
+  return true
 }
 </script>

@@ -502,6 +502,30 @@ describe('SubgraphNode Lifecycle', () => {
     // but it should clean up internal state
     expect(subgraphNode.inputs).toBeDefined()
   })
+
+  it('should not recompute promoted widgets during removal', () => {
+    const subgraph = createTestSubgraph({
+      inputs: [{ name: 'input', type: 'number' }]
+    })
+    const interiorNode = new LGraphNode('Test Node')
+    const interiorInput = interiorNode.addInput('input', 'number')
+    interiorNode.addWidget('number', 'value', 1, () => {})
+    interiorInput.widget = { name: 'value' }
+    subgraph.add(interiorNode)
+    subgraph.inputNode.slots[0].connect(interiorNode.inputs[0], interiorNode)
+
+    const subgraphNode = createTestSubgraphNode(subgraph)
+    expect(subgraphNode.widgets).toHaveLength(1)
+
+    Object.defineProperty(subgraphNode, 'widgets', {
+      get: () => {
+        throw new Error('widgets getter should not run during removal')
+      },
+      configurable: true
+    })
+
+    expect(() => subgraphNode.onRemoved()).not.toThrow()
+  })
 })
 
 describe('SubgraphNode Basic Functionality', () => {

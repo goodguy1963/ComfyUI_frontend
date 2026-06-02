@@ -141,6 +141,7 @@ class ComfyMenu {
 export class ComfyPage {
   public readonly url: string
   public readonly apiUrl: string
+  private pendingInitialSettings: Record<string, unknown> | null = null
   // All canvas position operations are based on default view of canvas.
   public readonly canvas: Locator
   public readonly selectionToolbox: Locator
@@ -256,7 +257,34 @@ export class ComfyPage {
     )
     const id = user?.[0]
 
-    return id ? id : await this.createUser(username)
+    if (id) {
+      return id
+    }
+
+    try {
+      return await this.createUser(username)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!message.includes('Duplicate username.')) {
+        throw error
+      }
+
+      const refreshedRes = await this.request.get(`${this.apiUrl}/api/users`)
+      if (refreshedRes.status() === 200) {
+        const refreshedApiRes = await refreshedRes.json()
+        const refreshedUser = Object.entries(refreshedApiRes?.users ?? {}).find(
+          ([, name]) => name === username
+        )
+        const refreshedId = refreshedUser?.[0]
+        if (refreshedId) {
+          return refreshedId
+        }
+      }
+
+      return await this.createUser(
+        `${username}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+      )
+    }
   }
 
   async createUser(username: string) {
@@ -270,6 +298,31 @@ export class ComfyPage {
     return await resp.json()
   }
 
+  private mergePendingInitialSettings(settings: Record<string, unknown>) {
+    this.pendingInitialSettings = {
+      ...(this.pendingInitialSettings ?? {}),
+      ...settings
+    }
+  }
+
+  private serializeInitialSettingValue(value: unknown): string {
+    return typeof value === 'string' ? value : JSON.stringify(value)
+  }
+
+  private async applyPendingInitialSettings() {
+    if (!this.pendingInitialSettings) return
+
+    const settings = this.pendingInitialSettings
+    this.pendingInitialSettings = null
+
+    await this.page.evaluate(async (entries) => {
+      for (const [id, value] of entries) {
+        await window.app!.extensionManager.setting.set(id, value)
+      }
+    }, Object.entries(settings))
+    await nextFrame(this.page)
+  }
+
   async setupSettings(settings: Record<string, unknown>) {
     const resp = await this.request.post(
       `${this.apiUrl}/api/devtools/set_settings`,
@@ -277,6 +330,16 @@ export class ComfyPage {
         data: settings
       }
     )
+
+    if (resp.status() === 200) {
+      this.pendingInitialSettings = null
+      return
+    }
+
+    if (resp.status() === 404 || resp.status() === 405) {
+      this.mergePendingInitialSettings(settings)
+      return
+    }
 
     if (resp.status() !== 200) {
       throw new Error(`Failed to setup settings: ${await resp.text()}`)
@@ -315,30 +378,43 @@ export class ComfyPage {
       // Navigate to a lightweight same-origin endpoint to obtain a page
       // context for clearing storage without loading the full frontend app.
       await this.page.goto(`${this.url}/api/users`)
-      await this.page.evaluate((id) => {
+      const pendingInitialSettings = this.pendingInitialSettings
+      await this.page.evaluate(({ id, settings }) => {
         localStorage.clear()
         sessionStorage.clear()
         localStorage.setItem('Comfy.userId', id)
-      }, this.id)
+        for (const [key, value] of settings) {
+          localStorage.setItem(key, value)
+        }
+      }, {
+        id: this.id,
+        settings: Object.entries(pendingInitialSettings ?? {}).map(
+          ([key, value]) => [key, this.serializeInitialSettingValue(value)]
+        )
+      })
     }
 
     await this.goto({ url })
 
     await this.page.waitForFunction(() => document.fonts.ready)
     await this.waitForAppReady()
+    await this.applyPendingInitialSettings()
   }
 
   /**
    * Wait for the app to finish initializing after navigation/reload:
-   * `window.app.extensionManager` is present, the PrimeVue block-UI mask is
-   * hidden, and one animation frame has elapsed. Shared by `setup()` and
-   * `WorkflowHelper.reloadAndWaitForApp()`.
+   * `window.app` has reached a usable graph/canvas state, the PrimeVue block-UI
+   * mask is hidden, and one animation frame has elapsed. Shared by `setup()`
+   * and `WorkflowHelper.reloadAndWaitForApp()`.
    */
   async waitForAppReady() {
     await this.page.waitForFunction(
       // window.app => GraphCanvas ready
-      // window.app.extensionManager => GraphView ready
-      () => window.app?.extensionManager
+      // window.app.extensionManager => GraphView ready on current frontend
+      // window.app.canvas / window.app.graph => compatible with older frontend
+      () =>
+        window.app &&
+        (window.app.extensionManager || window.app.canvas || window.app.graph)
     )
     await this.page.locator('.p-blockui-mask').waitFor({ state: 'hidden' })
     await this.nextFrame()

@@ -275,6 +275,20 @@ describe('getPromotableWidgets', () => {
       widgets.some((widget) => widget.name === CANVAS_IMAGE_PREVIEW_WIDGET)
     ).toBe(false)
   })
+
+  it('fails closed when node widgets access overflows', () => {
+    const node = new LGraphNode('Reroute')
+    node.type = 'Reroute'
+    Object.defineProperty(node, 'widgets', {
+      configurable: true,
+      get() {
+        throw new RangeError('Maximum call stack size exceeded')
+      }
+    })
+
+    expect(() => getPromotableWidgets(node)).not.toThrow()
+    expect(getPromotableWidgets(node)).toEqual([])
+  })
 })
 
 describe('promoteRecommendedWidgets', () => {
@@ -436,6 +450,41 @@ describe('autoExposeKnownPreviewNodes', () => {
         .getExposures(subgraphNode.rootGraph.id, String(subgraphNode.id))
         .map((e) => e.sourceNodeId)
     ).not.toContain(String(glslNode.id))
+  })
+
+  it('fails closed for malformed nodes whose widgets access overflows', () => {
+    const subgraph = createTestSubgraph()
+    const subgraphNode = createTestSubgraphNode(subgraph)
+    const healthyNode = new LGraphNode('GLSLShader')
+    healthyNode.type = 'GLSLShader'
+    subgraph.add(healthyNode)
+
+    const malformedNode = new LGraphNode('Reroute')
+    malformedNode.type = 'Reroute'
+    subgraph.add(malformedNode)
+    Object.defineProperty(malformedNode, 'widgets', {
+      configurable: true,
+      get() {
+        throw new RangeError('Maximum call stack size exceeded')
+      }
+    })
+
+    expect(() => autoExposeKnownPreviewNodes(subgraphNode)).not.toThrow()
+    expect(
+      usePreviewExposureStore().getExposures(
+        subgraphNode.rootGraph.id,
+        String(subgraphNode.id)
+      )
+    ).toContainEqual({
+      name: CANVAS_IMAGE_PREVIEW_WIDGET,
+      sourceNodeId: String(healthyNode.id),
+      sourcePreviewName: CANVAS_IMAGE_PREVIEW_WIDGET
+    })
+    expect(
+      usePreviewExposureStore()
+        .getExposures(subgraphNode.rootGraph.id, String(subgraphNode.id))
+        .map((exposure) => exposure.sourceNodeId)
+    ).not.toContain(String(malformedNode.id))
   })
 })
 

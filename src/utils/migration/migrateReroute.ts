@@ -91,7 +91,10 @@ class ConversionContext {
   private _getRerouteChain(node: RerouteNode): RerouteNode[] {
     const nodes: RerouteNode[] = []
     let currentNode: RerouteNode = node
+    const visitedNodeIds = new Set<NodeId>()
     while (currentNode?.type === 'Reroute') {
+      if (visitedNodeIds.has(currentNode.id)) break
+      visitedNodeIds.add(currentNode.id)
       nodes.push(currentNode)
       const inputLink: ComfyLinkObject | undefined =
         this.linkById[currentNode.inputs?.[0]?.link ?? 0]
@@ -104,6 +107,16 @@ class ConversionContext {
     }
 
     return nodes
+  }
+
+  private _getStartingLink(rerouteNodes: RerouteNode[]): ComfyLinkObject | null {
+    const startingLink =
+      this.linkById[
+        rerouteNodes[rerouteNodes.length - 1]?.inputs?.[0]?.link ?? -1
+      ]
+    return startingLink && !this.rerouteByNodeId[startingLink.origin_id]
+      ? startingLink
+      : null
   }
 
   private _connectRerouteChain(rerouteNodes: RerouteNode[]): Reroute[] {
@@ -200,7 +213,10 @@ class ConversionContext {
     }
   }
 
-  private _reconnectLinks(nodes: ComfyNode[], links: ComfyLinkObject[]): void {
+  private _reconnectLinks(
+    nodes: ComfyNode[],
+    links: ComfyLinkObject[]
+  ): ComfyLinkObject[] {
     // Remove all existing links on sockets
     for (const node of nodes) {
       for (const input of node.inputs ?? []) {
@@ -212,15 +228,25 @@ class ConversionContext {
     }
 
     const nodesById = _.keyBy(nodes, 'id')
+    const validLinks: ComfyLinkObject[] = []
 
     // Reconnect the links
     for (const link of links) {
       const sourceNode = nodesById[link.origin_id]
-      sourceNode.outputs![link.origin_slot]!.links!.push(link.id)
+      const sourceOutput = sourceNode?.outputs?.[link.origin_slot]
 
       const targetNode = nodesById[link.target_id]
-      targetNode.inputs![link.target_slot]!.link = link.id
+      const targetInput = targetNode?.inputs?.[link.target_slot]
+
+      if (!sourceOutput || !targetInput) continue
+
+      sourceOutput.links ??= []
+      sourceOutput.links.push(link.id)
+      targetInput.link = link.id
+      validLinks.push(link)
     }
+
+    return validLinks
   }
 
   migrateReroutes(): WorkflowJSON04 {
@@ -230,6 +256,10 @@ class ConversionContext {
     const endingLinks: ComfyLinkObject[] = []
 
     for (const link of Object.values(this.linkById)) {
+      const sourceNode = this.nodeById[link.origin_id]
+      const targetNode = this.nodeById[link.target_id]
+      if (!sourceNode || !targetNode) continue
+
       const sourceIsReroute = !!this.rerouteByNodeId[link.origin_id]
       const targetIsReroute = !!this.rerouteByNodeId[link.target_id]
 
@@ -246,10 +276,7 @@ class ConversionContext {
         endingLink.origin_id
       ] as RerouteNode
       const rerouteNodes = this._getRerouteChain(endingRerouteNode)
-      const startingLink =
-        this.linkById[
-          rerouteNodes[rerouteNodes.length - 1]?.inputs?.[0]?.link ?? -1
-        ]
+      const startingLink = this._getStartingLink(rerouteNodes)
       if (startingLink) {
         // Valid link found, create a new link
         links.push(this._createNewLink(startingLink, endingLink, rerouteNodes))
@@ -271,10 +298,7 @@ class ConversionContext {
 
     for (const rerouteNode of floatingEndingRerouteNodes) {
       const rerouteNodes = this._getRerouteChain(rerouteNode)
-      const startingLink =
-        this.linkById[
-          rerouteNodes[rerouteNodes.length - 1]?.inputs?.[0]?.link ?? -1
-        ]
+      const startingLink = this._getStartingLink(rerouteNodes)
       if (startingLink) {
         floatingLinks.push(
           this._createNewOutputFloatingLink(startingLink, rerouteNodes)
@@ -285,12 +309,12 @@ class ConversionContext {
     const nodes = Object.values(this.nodeById).filter(
       (node) => node.type !== 'Reroute'
     )
-    this._reconnectLinks(nodes, links)
+    const validLinks = this._reconnectLinks(nodes, links)
 
     return {
       ...this.workflow,
       nodes,
-      links: links.map((link) => [
+      links: validLinks.map((link) => [
         link.id,
         link.origin_id,
         link.origin_slot,

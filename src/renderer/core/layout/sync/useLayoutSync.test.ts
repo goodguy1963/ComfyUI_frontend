@@ -137,7 +137,70 @@ describe('useLayoutSync', () => {
     testState.microtaskCallback?.()
 
     expect(canvas.setDirty).toHaveBeenCalledTimes(1)
+    expect(canvas.setDirty).toHaveBeenCalledWith(true, true)
     expect(liteNode.pos).toEqual([20, 30])
+
+    unmount()
+  })
+
+  it('dirties only the background canvas for move-only sync writes', () => {
+    const liteNode = {
+      pos: [0, 0],
+      size: [120, 70],
+      onResize: vi.fn()
+    }
+    const canvas = {
+      graph: {
+        getNodeById: vi.fn(() => liteNode)
+      },
+      setDirty: vi.fn()
+    }
+
+    testState.layoutByNodeId.set('1', {
+      position: { x: 24, y: 36 },
+      size: { width: 120, height: 70 }
+    })
+
+    const { unmount } = render(LayoutSyncHarness)
+
+    syncApi.startSync(canvas as never)
+    testState.listener?.({ nodeIds: ['1'], source: LayoutSource.External })
+    testState.rafCallback?.(0)
+
+    expect(liteNode.onResize).not.toHaveBeenCalled()
+    expect(canvas.setDirty).toHaveBeenCalledTimes(1)
+    expect(canvas.setDirty).toHaveBeenCalledWith(false, true)
+
+    unmount()
+  })
+
+  it('keeps full canvas dirtying for size changes', () => {
+    const liteNode = {
+      pos: [0, 0],
+      size: [100, 50],
+      onResize: vi.fn()
+    }
+    const canvas = {
+      graph: {
+        getNodeById: vi.fn(() => liteNode)
+      },
+      setDirty: vi.fn()
+    }
+
+    testState.layoutByNodeId.set('1', {
+      position: { x: 0, y: 0 },
+      size: { width: 160, height: 90 }
+    })
+
+    const { unmount } = render(LayoutSyncHarness)
+
+    syncApi.startSync(canvas as never)
+    testState.listener?.({ nodeIds: ['1'], source: LayoutSource.External })
+    testState.rafCallback?.(0)
+
+    expect(liteNode.onResize).toHaveBeenCalledTimes(1)
+    expect(canvas.setDirty).toHaveBeenCalledTimes(1)
+    expect(canvas.setDirty).toHaveBeenCalledWith(true, true)
 
     unmount()
   })
@@ -169,6 +232,39 @@ describe('useLayoutSync', () => {
 
     expect(testState.cancelAnimationFrame).toHaveBeenCalledWith(1)
     expect(testState.microtaskCallback).toBeTruthy()
+
+    unmount()
+  })
+
+  it('does not dirty the canvas when pending nodes produce no graph-visible change', () => {
+    const unchangedNode = {
+      pos: [12, 18],
+      size: [140, 90],
+      onResize: vi.fn()
+    }
+    const canvas = {
+      graph: {
+        getNodeById: vi.fn((nodeId: string) =>
+          nodeId === '1' ? unchangedNode : null
+        )
+      },
+      setDirty: vi.fn()
+    }
+
+    testState.layoutByNodeId.set('1', {
+      position: { x: 12, y: 18 },
+      size: { width: 140, height: 90 }
+    })
+
+    const { unmount } = render(LayoutSyncHarness)
+
+    syncApi.startSync(canvas as never)
+    testState.listener?.({ nodeIds: ['1', 'missing'], source: LayoutSource.Vue })
+    testState.microtaskCallback?.()
+
+    expect(canvas.graph.getNodeById).toHaveBeenCalledTimes(1)
+    expect(unchangedNode.onResize).not.toHaveBeenCalled()
+    expect(canvas.setDirty).not.toHaveBeenCalled()
 
     unmount()
   })

@@ -153,6 +153,8 @@ import {
 
 export const ANIM_PREVIEW_WIDGET = '$$comfy_animation_preview'
 
+const MAX_CANVAS_BACKING_STORE_DIMENSION = 16384
+
 export function sanitizeNodeName(string: string) {
   let entityMap = {
     '&': '',
@@ -972,12 +974,34 @@ export class ComfyApp {
   private resizeCanvas(canvas: HTMLCanvasElement) {
     // Limit minimal scale to 1, see https://github.com/comfyanonymous/ComfyUI/pull/845
     const scale = Math.max(window.devicePixelRatio, 1)
+    const previousWidth = canvas.width
+    const previousHeight = canvas.height
 
     // Clear fixed width and height while calculating rect so it uses 100% instead
     canvas.height = canvas.width = NaN
     const { width, height } = canvas.getBoundingClientRect()
-    canvas.width = Math.round(width * scale)
-    canvas.height = Math.round(height * scale)
+    const scaledWidth = Math.round(width * scale)
+    const scaledHeight = Math.round(height * scale)
+
+    // Ignore invalid or pathological rects rather than asking the browser to
+    // allocate an oversized backing store that can trigger resize error loops.
+    if (
+      !Number.isFinite(width) ||
+      !Number.isFinite(height) ||
+      !Number.isFinite(scaledWidth) ||
+      !Number.isFinite(scaledHeight) ||
+      scaledWidth < 0 ||
+      scaledHeight < 0 ||
+      scaledWidth > MAX_CANVAS_BACKING_STORE_DIMENSION ||
+      scaledHeight > MAX_CANVAS_BACKING_STORE_DIMENSION
+    ) {
+      canvas.width = previousWidth
+      canvas.height = previousHeight
+      return
+    }
+
+    canvas.width = scaledWidth
+    canvas.height = scaledHeight
     canvas.getContext('2d')?.scale(scale, scale)
     this.canvas?.draw(true, true)
   }

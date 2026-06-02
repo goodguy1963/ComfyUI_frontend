@@ -20,11 +20,14 @@ const FIELD_FORMATTERS: Record<string, (m: PerfMeasurement) => string> = {
   taskDurationMs: (m) => `${m.taskDurationMs.toFixed(1)}ms task`,
   layoutDurationMs: (m) => `${m.layoutDurationMs.toFixed(1)}ms layout`,
   frameDurationMs: (m) => `${m.frameDurationMs.toFixed(1)}ms/frame`,
+  taskDurationPerFrameMs: (m) =>
+    `${m.taskDurationPerFrameMs.toFixed(1)}ms active-task/frame`,
   totalBlockingTimeMs: (m) => `TBT=${m.totalBlockingTimeMs.toFixed(0)}ms`,
   durationMs: (m) => `${m.durationMs.toFixed(0)}ms total`,
   heapDeltaBytes: (m) => `heap Δ${(m.heapDeltaBytes / 1024).toFixed(0)}KB`,
   domNodes: (m) => `DOM Δ${m.domNodes}`,
-  heapUsedBytes: (m) => `heap ${(m.heapUsedBytes / 1024 / 1024).toFixed(1)}MB`
+  heapUsedBytes: (m) => `heap ${(m.heapUsedBytes / 1024 / 1024).toFixed(1)}MB`,
+  frameCount: (m) => `${m.frameCount} frames`
 }
 
 /**

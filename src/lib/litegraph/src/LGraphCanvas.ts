@@ -83,6 +83,8 @@ import {
   overlapBounding,
   snapPoint
 } from './measure'
+
+const VUE_NODES_LOW_DETAIL_PAN_LINK_SCALE = 0.12
 import { NodeInputSlot } from './node/NodeInputSlot'
 import type { Subgraph } from './subgraph/Subgraph'
 import { topologicalSortSubgraphs } from './subgraph/subgraphDeduplication'
@@ -678,6 +680,10 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
    * performant than {@link visible_nodes} for visibility checks.
    */
   private _visible_node_ids: Set<NodeId> = new Set()
+  /** Tracks the graph version at the time {@link computeVisibleNodes} last
+   * called {@link LGraphNode.updateArea}, so node bounding-box computation
+   * can be skipped when no structural graph change has occurred. */
+  private _lastComputedVisibleGraphVersion: number = -1
   node_over?: LGraphNode
   node_capturing_input?: LGraphNode | null
   highlighted_links: Dictionary<boolean> = {}
@@ -686,6 +692,7 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
   private _autoPan: AutoPanController | null = null
   private _ghostPointerHandler: ((e: PointerEvent) => void) | null = null
   private _ghostKeyHandler: ((e: KeyboardEvent) => void) | null = null
+  private _pointerEventCanvasRect: DOMRect | null = null
 
   dirty_canvas: boolean = true
   dirty_bgcanvas: boolean = true
@@ -2088,6 +2095,14 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     if (bgcanvas) this.dirty_bgcanvas = true
   }
 
+  private beginPointerEventRectCache(): void {
+    this._pointerEventCanvasRect = this.canvas.getBoundingClientRect()
+  }
+
+  private clearPointerEventRectCache(): void {
+    this._pointerEventCanvasRect = null
+  }
+
   /** Marks the entire canvas as dirty. */
   private _dirty(): void {
     this.dirty_canvas = true
@@ -2264,12 +2279,16 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     }
 
     const { graph, pointer } = this
+    this.beginPointerEventRectCache()
     this.adjustMouseEvent(e)
     if (e.isPrimary) pointer.down(e)
 
     if (this.set_canvas_dirty_on_mouse_event) this.dirty_canvas = true
 
-    if (!graph) return
+    if (!graph) {
+      this.clearPointerEventRectCache()
+      return
+    }
 
     const ref_window = this.getCanvasWindow()
     LGraphCanvas.active_canvas = this
@@ -3805,83 +3824,90 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     if (e.isPrimary === false) return
 
     const { graph, pointer } = this
-    if (!graph) return
+    if (!graph) {
+      this.clearPointerEventRectCache()
+      return
+    }
 
     this._finishDragZoom()
 
     LGraphCanvas.active_canvas = this
 
-    this.adjustMouseEvent(e)
+    try {
+      this.adjustMouseEvent(e)
 
-    const now = LiteGraph.getTime()
-    e.click_time = now - this.last_mouseclick
+      const now = LiteGraph.getTime()
+      e.click_time = now - this.last_mouseclick
 
-    /** The mouseup event occurred near the mousedown event. */
-    /** Normal-looking click event - mouseUp occurred near mouseDown, without dragging. */
-    const isClick = pointer.up(e)
-    if (isClick === true) {
+      /** The mouseup event occurred near the mousedown event. */
+      /** Normal-looking click event - mouseUp occurred near mouseDown, without dragging. */
+      const isClick = pointer.up(e)
+      if (isClick === true) {
+        pointer.isDown = false
+        pointer.isDouble = false
+        // Required until all link behaviour is added to Pointer API
+        this.connecting_links = null
+        this.dragging_canvas = false
+
+        graph.change()
+
+        e.stopPropagation()
+        e.preventDefault()
+        return
+      }
+
+      this.last_mouse_dragging = false
+      this.last_click_position = null
+
+      // used to avoid sending twice a click in an immediate button
+      this.block_click &&= false
+
+      if (e.button === 0) {
+        // left button
+        this.selected_group = null
+
+        this.isDragging = false
+
+        const x = e.canvasX
+        const y = e.canvasY
+
+        if (!this.linkConnector.isConnecting) {
+          this.dirty_canvas = true
+
+          this.node_over?.onMouseUp?.(
+            e,
+            [x - this.node_over.pos[0], y - this.node_over.pos[1]],
+            this
+          )
+          this.node_capturing_input?.onMouseUp?.(
+            e,
+            [
+              x - this.node_capturing_input.pos[0],
+              y - this.node_capturing_input.pos[1]
+            ],
+            this
+          )
+        }
+      } else if (isMiddleButtonEvent(e)) {
+        // middle button
+        this.dirty_canvas = true
+        this.dragging_canvas = false
+      } else if (e.button === 2) {
+        // right button
+        this.dirty_canvas = true
+      }
+
       pointer.isDown = false
       pointer.isDouble = false
-      // Required until all link behaviour is added to Pointer API
-      this.connecting_links = null
-      this.dragging_canvas = false
 
       graph.change()
 
       e.stopPropagation()
       e.preventDefault()
       return
+    } finally {
+      this.clearPointerEventRectCache()
     }
-
-    this.last_mouse_dragging = false
-    this.last_click_position = null
-
-    // used to avoid sending twice a click in an immediate button
-    this.block_click &&= false
-
-    if (e.button === 0) {
-      // left button
-      this.selected_group = null
-
-      this.isDragging = false
-
-      const x = e.canvasX
-      const y = e.canvasY
-
-      if (!this.linkConnector.isConnecting) {
-        this.dirty_canvas = true
-
-        this.node_over?.onMouseUp?.(
-          e,
-          [x - this.node_over.pos[0], y - this.node_over.pos[1]],
-          this
-        )
-        this.node_capturing_input?.onMouseUp?.(
-          e,
-          [
-            x - this.node_capturing_input.pos[0],
-            y - this.node_capturing_input.pos[1]
-          ],
-          this
-        )
-      }
-    } else if (isMiddleButtonEvent(e)) {
-      // middle button
-      this.dirty_canvas = true
-      this.dragging_canvas = false
-    } else if (e.button === 2) {
-      // right button
-      this.dirty_canvas = true
-    }
-
-    pointer.isDown = false
-    pointer.isDouble = false
-
-    graph.change()
-
-    e.stopPropagation()
-    e.preventDefault()
-    return
   }
 
   /**
@@ -3890,13 +3916,18 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
    */
   processMouseOut(e: PointerEvent): void {
     // TODO: Check if document.contains(e.relatedTarget) - handle mouseover node textarea etc.
-    this.adjustMouseEvent(e)
-    this.updateMouseOverNodes(null, e)
+    try {
+      this.adjustMouseEvent(e)
+      this.updateMouseOverNodes(null, e)
+    } finally {
+      this.clearPointerEventRectCache()
+    }
   }
 
   processMouseCancel(): void {
     console.warn('Pointer cancel!')
     this.pointer.reset()
+    this.clearPointerEventRectCache()
   }
 
   /**
@@ -4876,6 +4907,7 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
       node.size[1] * 0.5 +
       (this.canvas.height * 0.5) / (this.ds.scale * dpi)
     this.setDirty(true, true)
+    this.dispatch('litegraph:center-on-node', { nodeId: node.id })
   }
 
   /**
@@ -4888,7 +4920,8 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     let clientY_rel = e.clientY
 
     if (this.canvas) {
-      const b = this.canvas.getBoundingClientRect()
+      const b =
+        this._pointerEventCanvasRect ?? this.canvas.getBoundingClientRect()
       clientX_rel -= b.left
       clientY_rel -= b.top
     }
@@ -4985,8 +5018,17 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     if (!this.graph) throw new NullGraphError()
 
     const _nodes = nodes || this.graph._nodes
+    // Skip updateArea when the graph hasn't changed structurally — node
+    // bounding boxes remain stable during pure camera movement and only
+    // need to be recomputed after a node add/remove/resize/reconfigure.
+    const graphVersion = this.graph._version
+    const skipUpdateArea = this._lastComputedVisibleGraphVersion === graphVersion
+    this._lastComputedVisibleGraphVersion = graphVersion
+
     for (const node of _nodes) {
-      node.updateArea(this.ctx)
+      if (!skipUpdateArea) {
+        node.updateArea(this.ctx)
+      }
       // Not in visible area
       if (!overlapBounding(this.visible_area, node.renderArea)) continue
 
@@ -5619,9 +5661,8 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     // We still need to keep slot metrics and layout in sync for hit-testing and links.
     // Interaction system changes coming later, chances are vue nodes mode will be mostly broken on land
     if (LiteGraph.vueNodesMode) {
-      // Prepare concrete slots and compute layout measures without rendering visuals.
-      node._setConcreteSlots()
-      if (!node.collapsed) {
+      if (!node.collapsed && node._widgetSlotsDirty) {
+        node._setConcreteSlots()
         node.arrange()
       }
       // Skip all node body/widget/title rendering. Vue overlay handles visuals.
@@ -5988,6 +6029,16 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
   drawConnections(ctx: CanvasRenderingContext2D): void {
     this.renderedPaths.clear()
     if (this.links_render_mode === LinkRenderType.HIDDEN_LINK) return
+    if (
+      LiteGraph.vueNodesMode &&
+      this.dragging_canvas &&
+      this.pointer.isDown &&
+      this.pointer.eDown?.button === 1 &&
+      this.ds.scale <= VUE_NODES_LOW_DETAIL_PAN_LINK_SCALE
+    ) {
+      this._visibleReroutes.clear()
+      return
+    }
 
     // Skip link rendering while waiting for slot positions to sync after reconfigure
     if (LiteGraph.vueNodesMode && layoutStore.pendingSlotSync) {
@@ -6028,6 +6079,23 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
       node.arrange()
     }
 
+    // Per-frame slot position cache: re-uses results across main links,
+    // subgraph links, and floating links within a single drawConnections call.
+    // Key format: "{nodeId}:{slotIndex}:{i|o}"
+    const slotPosCache = new Map<string, Point>()
+    const cachedSlotPos = (
+      node: LGraphNode,
+      slotIndex: number,
+      isInput: boolean
+    ): Point => {
+      const key = `${node.id}:${slotIndex}:${isInput ? 'i' : 'o'}`
+      const cached = slotPosCache.get(key)
+      if (cached) return cached
+      const pos = getSlotPosition(node, slotIndex, isInput)
+      slotPosCache.set(key, pos)
+      return pos
+    }
+
     for (const node of nodes) {
       // for every input (we render just inputs because it is easier as every slot can only have one input)
       const { inputs } = node
@@ -6041,7 +6109,7 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
         if (!link) continue
 
         const endPos: Point = LiteGraph.vueNodesMode // TODO: still use LG get pos if vue nodes is off until stable
-          ? getSlotPosition(node, i, true)
+          ? cachedSlotPos(node, i, true)
           : node.getInputPos(i)
 
         // find link info
@@ -6053,7 +6121,7 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
           outputId === -1
             ? [start_node.pos[0] + 10, start_node.pos[1] + 10]
             : LiteGraph.vueNodesMode // TODO: still use LG get pos if vue nodes is off until stable
-              ? getSlotPosition(start_node, outputId, false)
+              ? cachedSlotPos(start_node, outputId, false)
               : start_node.getOutputPos(outputId)
 
         const output = start_node.outputs[outputId]
@@ -6085,7 +6153,7 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
           if (!inputNode || !input) continue
 
           const endPos = LiteGraph.vueNodesMode
-            ? getSlotPosition(inputNode, link.target_slot, true)
+            ? cachedSlotPos(inputNode, link.target_slot, true)
             : inputNode.getInputPos(link.target_slot)
 
           this._renderAllLinkSegments(
@@ -6112,7 +6180,7 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
         if (!outputNode || !output) continue
 
         const startPos = LiteGraph.vueNodesMode
-          ? getSlotPosition(outputNode, link.origin_slot, false)
+          ? cachedSlotPos(outputNode, link.origin_slot, false)
           : outputNode.getOutputPos(link.origin_slot)
 
         this._renderAllLinkSegments(
@@ -6129,7 +6197,7 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     }
 
     if (graph.floatingLinks.size > 0) {
-      this._renderFloatingLinks(ctx, graph, visibleReroutes, now)
+      this._renderFloatingLinks(ctx, graph, visibleReroutes, now, slotPosCache)
     }
 
     const rerouteSet = this._visibleReroutes
@@ -6176,11 +6244,25 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     ctx: CanvasRenderingContext2D,
     graph: LGraph,
     visibleReroutes: Reroute[],
-    now: number
+    now: number,
+    slotPosCache: Map<string, Point>
   ) {
     // Render floating links with 3/4 current alpha
     const { globalAlpha } = ctx
     ctx.globalAlpha = globalAlpha * 0.33
+
+    const cachedSlotPos = (
+      node: LGraphNode,
+      slotIndex: number,
+      isInput: boolean
+    ): Point => {
+      const key = `${node.id}:${slotIndex}:${isInput ? 'i' : 'o'}`
+      const cached = slotPosCache.get(key)
+      if (cached) return cached
+      const pos = getSlotPosition(node, slotIndex, isInput)
+      slotPosCache.set(key, pos)
+      return pos
+    }
 
     // Floating reroutes
     for (const link of graph.floatingLinks.values()) {
@@ -6196,7 +6278,7 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
 
         const startPos = firstReroute.pos
         const endPos: Point = LiteGraph.vueNodesMode
-          ? getSlotPosition(node, link.target_slot, true)
+          ? cachedSlotPos(node, link.target_slot, true)
           : node.getInputPos(link.target_slot)
         const endDirection = node.inputs[link.target_slot]?.dir
 
@@ -6217,7 +6299,7 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
         if (!node) continue
 
         const startPos: Point = LiteGraph.vueNodesMode
-          ? getSlotPosition(node, link.origin_slot, false)
+          ? cachedSlotPos(node, link.origin_slot, false)
           : node.getOutputPos(link.origin_slot)
         const endPos = reroute.pos
         const startDirection = node.outputs[link.origin_slot]?.dir

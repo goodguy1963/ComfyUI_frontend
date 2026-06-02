@@ -80,8 +80,10 @@ export function calculateInputSlotPosFromSlot(
   // Default vertical slots
   const offsetX = LiteGraph.NODE_SLOT_HEIGHT * 0.5
   const nodeOffsetY = context.slotStartY || 0
-  const defaultVerticalInputs = getDefaultVerticalInputs(context)
-  const slotIndex = defaultVerticalInputs.indexOf(input)
+    const slotIndex =
+      'pos' in input && input.pos
+        ? 0
+        : getVerticalInputIndex(context, input)
   const slotY = (slotIndex + 0.7) * LiteGraph.NODE_SLOT_HEIGHT
 
   return [nodeX + offsetX, nodeY + slotY + nodeOffsetY]
@@ -117,8 +119,10 @@ function calculateOutputSlotPos(
   // Default vertical slots
   const offsetX = LiteGraph.NODE_SLOT_HEIGHT * 0.5
   const nodeOffsetY = context.slotStartY || 0
-  const defaultVerticalOutputs = getDefaultVerticalOutputs(context)
-  const slotIndex = defaultVerticalOutputs.indexOf(outputSlot)
+    const slotIndex =
+      outputPos
+        ? 0
+        : getVerticalOutputIndex(context, outputSlot)
   const slotY = (slotIndex + 0.7) * LiteGraph.NODE_SLOT_HEIGHT
 
   // TODO: Why +1?
@@ -192,21 +196,39 @@ export function getSlotPosition(
 }
 
 /**
- * Get the inputs that are not positioned with absolute coordinates
+ * Get the index of a slot within the default-vertical-positioned subset.
+ * Computed in a single pass without allocating intermediate arrays.
  */
-function getDefaultVerticalInputs(
-  context: SlotPositionContext
-): INodeInputSlot[] {
-  return context.inputs.filter(
-    (slot) => !slot.pos && !(context.widgets?.length && isWidgetInputSlot(slot))
-  )
+function getVerticalInputIndex(
+  context: SlotPositionContext,
+  target: INodeInputSlot
+): number {
+  let index = 0
+  for (const slot of context.inputs) {
+    if (slot === target) return index
+    if (!slot.pos && !(context.widgets?.length && isWidgetInputSlot(slot))) {
+      index++
+    }
+  }
+  return -1
 }
 
 /**
- * Get the outputs that are not positioned with absolute coordinates
+ * Get the index of a slot within the default-vertical-positioned subset.
+ * Computed in a single pass without allocating intermediate arrays.
  */
-function getDefaultVerticalOutputs(
-  context: SlotPositionContext
-): INodeOutputSlot[] {
-  return context.outputs.filter((slot) => !slot.pos)
+function getVerticalOutputIndex(
+  context: SlotPositionContext,
+  target: INodeOutputSlot
+): number {
+  let index = 0
+  for (const slot of context.outputs) {
+    if (slot === target) return index
+    if (!slot.pos) {
+      index++
+    }
+  }
+  return -1
 }
+
+
