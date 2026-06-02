@@ -34,13 +34,18 @@ const lazyPublishDialog = () =>
   import('@/platform/workflow/sharing/components/publish/ComfyHubPublishDialog.vue')
 
 /**
+ * Shrink-wrap the Reka DialogContent around the content's intrinsic width,
+ * like the auto-sized PrimeVue root it replaces.
+ */
+const HUG_CONTENT_CLASS =
+  'w-fit max-w-[calc(100vw-1rem)] sm:max-w-[calc(100vw-1rem)]'
+
+/**
  * Reka chrome for headless dialogs whose content draws its own panel
  * (background/border/rounding) — neutralize the DialogContent box and
- * shrink-wrap it around the content, like the auto-sized PrimeVue root
- * it replaces.
+ * shrink-wrap it around the content.
  */
-const SELF_STYLED_PANEL_CONTENT_CLASS =
-  'w-fit max-w-[calc(100vw-1rem)] sm:max-w-[calc(100vw-1rem)] border-none bg-transparent shadow-none'
+const SELF_STYLED_PANEL_CONTENT_CLASS = `${HUG_CONTENT_CLASS} border-none bg-transparent shadow-none`
 
 export type ConfirmationDialogType =
   | 'default'
@@ -207,7 +212,7 @@ export const useDialogService = () => {
         headerComponent: ComfyOrgHeader,
         dialogComponentProps: {
           renderer: 'reka',
-          size: 'sm',
+          contentClass: HUG_CONTENT_CLASS,
           closable: false,
           onClose: () => resolve(false)
         }
@@ -232,7 +237,9 @@ export const useDialogService = () => {
         },
         dialogComponentProps: {
           renderer: 'reka',
-          size: 'sm',
+          // SignInContent is a fixed w-96 — size 'sm' (max-w-sm) leaves only
+          // 352px after the body padding; hug the intrinsic width instead.
+          contentClass: HUG_CONTENT_CLASS,
           closable: true,
           onClose: () => resolve(false)
         }
@@ -362,7 +369,7 @@ export const useDialogService = () => {
       },
       dialogComponentProps: {
         renderer: 'reka',
-        size: 'sm'
+        contentClass: HUG_CONTENT_CLASS
       }
     })
   }

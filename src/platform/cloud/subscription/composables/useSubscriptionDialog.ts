@@ -60,6 +60,10 @@ export const useSubscriptionDialog = () => {
       dialogComponentProps: {
         renderer: 'reka',
         size: 'full',
+        // The pricing tables host a PrimeVue Popover teleported to body.
+        // Reka's modal mode traps focus and disables body pointer-events,
+        // making the popover unclickable. Mirrors Settings/Manager.
+        modal: false,
         contentClass:
           'w-[min(1328px,95vw)] max-w-[min(1328px,95vw)] sm:max-w-[min(1328px,95vw)] h-full max-h-[958px] overflow-hidden rounded-2xl border-border-default bg-base-background/60 shadow-[0_25px_80px_rgba(5,6,12,0.45)] backdrop-blur-md'
       }
