@@ -28,7 +28,7 @@ Date note: the local execution environment reported `2026-06-02`; the user reque
 
 | ID | Task | Status | Required tests |
 | --- | --- | --- | --- |
-| R1 | Stabilize instrumentation and comparison reporting for `main`, `research-start`, and `research-final`. | Pending | Benchmark probe runs on all available states. |
+| R1 | Stabilize instrumentation and comparison reporting for `main`, `research-start`, and `research-final`. | Complete | Benchmark probe runs on all available states. |
 | R2 | Add drag/pan fast-path instrumentation for Yjs transaction and layout sync rates before changing behavior. | Pending | Unit tests, typecheck, Replacer probe with instrumentation counters. |
 | R3 | Implement interaction fast-path or transient layout buffering behind a feature flag. | Pending | Layout store tests, drag/resize tests, Replacer pan probe. |
 | R4 | Implement delta-based mounting or mount-set hysteresis behind a feature flag. | Pending | `viewportMountedNodes` tests, GraphCanvas tests, Replacer probe. |
@@ -75,3 +75,39 @@ Probe result:
 | Close mounted nodes | 20 |
 | Close pan | 101.1 ms |
 | Close wheel | 39.8 ms |
+
+### R1 Replacer Probe Summary Helper
+
+Change:
+
+- Added `scripts/replacer-probe-summary.cjs` to render consistent Markdown tables from one or more `replacer_input_latency_probe.cjs` JSON outputs.
+- The helper is intentionally small and independent of transient `output_sessions/` files, so future research commits can quote comparable tables without hand-parsing JSON.
+
+Command:
+
+```powershell
+node scripts\replacer-probe-summary.cjs main=output_sessions\fair-main-branch-tests-20260602\main-replacer-probe.json research-start=output_sessions\fair-main-branch-tests-20260602\branch-replacer-probe.json research-current=output_sessions\cosmetic-node-visuals-replacer-probe.json
+```
+
+Single-sample local comparison:
+
+| Metric | main | research-start | research-current |
+| --- | ---: | ---: | ---: |
+| App ready | 5224 | 8548 | 5169 |
+| Workflow load | 9170 | 20278 | 19194 |
+| Probe total | 19327 | 33586 | 28444 |
+| Far mounted nodes | 291 | 0 | 0 |
+| Far pan | 70.1 | 56.0 | 50.7 |
+| Far wheel | 90.9 | 61.9 | 26.0 |
+| Middle mounted nodes | 291 | 66 | 66 |
+| Middle pan | 61.9 | 166.9 | 77.8 |
+| Middle wheel | 102.8 | 57.6 | 38.7 |
+| Close mounted nodes | 291 | 20 | 20 |
+| Close pan | 51.0 | 75.7 | 101.1 |
+| Close wheel | 105.7 | 62.2 | 39.8 |
+
+Interpretation:
+
+- Treat this as a continuity table, not a final benchmark. These are single samples from already-created local probe outputs.
+- The cosmetic patch keeps the same mounted-node counts as the research-start state.
+- Close-pan latency remains noisy and is still an unresolved issue.
