@@ -1,7 +1,7 @@
 import type { VueNodeData } from '@/composables/graph/useGraphNodeManager'
 import type { Bounds } from '@/renderer/core/layout/types'
 
-export const VUE_NODE_VIEWPORT_OVERSCAN = 0.35
+export const VUE_NODE_VIEWPORT_OVERSCAN = 0.08
 
 export type ViewportNodeBoundsProvider = (nodeId: string) => Bounds | null
 
