@@ -60,7 +60,7 @@
 
   <!-- TransformPane for Vue node rendering -->
   <TransformPane
-    v-if="shouldRenderVueNodes && comfyApp.canvas && comfyAppReady"
+    v-if="shouldMountVueNodeDom && comfyApp.canvas && comfyAppReady"
     :canvas="comfyApp.canvas"
     :active-pan-detail="activePanDetailLevel"
     :is-middle-panning="isMiddleCanvasPanning"
@@ -84,6 +84,11 @@
       :data-node-id="nodeData.id"
     />
   </TransformPane>
+
+  <FarZoomNodeCanvas
+    v-if="shouldRenderFarZoomNodeCanvas && comfyApp.canvas && comfyAppReady"
+    :canvas="comfyApp.canvas"
+  />
 
   <LinkOverlayCanvas
     v-if="shouldRenderVueNodes && comfyApp.canvas && comfyAppReady"
@@ -136,6 +141,7 @@ import AppBuilder from '@/components/builder/AppBuilder.vue'
 import VueNodeSwitchPopup from '@/components/builder/VueNodeSwitchPopup.vue'
 import ExtensionSlot from '@/components/common/ExtensionSlot.vue'
 import DomWidgets from '@/components/graph/DomWidgets.vue'
+import FarZoomNodeCanvas from '@/components/graph/FarZoomNodeCanvas.vue'
 import GraphCanvasMenu from '@/components/graph/GraphCanvasMenu.vue'
 import {
   getOrderedMountedVueNodes,
@@ -245,6 +251,7 @@ const { isTransforming: isCanvasTransforming } = useTransformSettling(canvasRef,
 const isMiddleCanvasPanning = ref(false)
 
 const STABLE_LOW_DETAIL_SCALE = 0.12
+const FAR_ZOOM_CANVAS_SCALE = 0.18
 const ACTIVE_PAN_MIDDLE_DETAIL_SCALE = 0.35
 const ACTIVE_PAN_CLOSE_DETAIL_SCALE = 0.65
 const ENABLE_MIDDLE_PAN_DOM_SNAPSHOT_FALLBACK = false
@@ -292,6 +299,12 @@ const minimapEnabled = computed(() => settingStore.get('Comfy.Minimap.Visible'))
 
 // Feature flags
 const { shouldRenderVueNodes } = useVueFeatureFlags()
+const shouldRenderFarZoomNodeCanvas = computed(
+  () => shouldRenderVueNodes.value && camera.z <= FAR_ZOOM_CANVAS_SCALE
+)
+const shouldMountVueNodeDom = computed(
+  () => shouldRenderVueNodes.value && !shouldRenderFarZoomNodeCanvas.value
+)
 
 // Vue node system
 const vueNodeLifecycle = useVueNodeLifecycle()
@@ -432,6 +445,8 @@ watch(
 )
 
 const mountedNodes = computed((): VueNodeData[] => {
+  if (shouldRenderFarZoomNodeCanvas.value) return []
+
   const orderedNodes = allNodes.value
   if (!orderedNodes.length) return orderedNodes
 
