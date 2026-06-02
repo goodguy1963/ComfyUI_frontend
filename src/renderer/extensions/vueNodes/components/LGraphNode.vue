@@ -415,9 +415,11 @@ const bypassed = computed(
 )
 const muted = computed((): boolean => nodeData.mode === LGraphEventMode.NEVER)
 
+const STABLE_LOW_DETAIL_SCALE = 0.5
+
 const lowDetail = computed(
   () =>
-    camera.z <= 0.2 &&
+    camera.z <= STABLE_LOW_DETAIL_SCALE &&
     !isSelected.value &&
     !executing.value &&
     !hasAnyError.value &&
