@@ -7,6 +7,15 @@ import UploadModelUpgradeModal from '@/platform/assets/components/UploadModelUpg
 import UploadModelUpgradeModalHeader from '@/platform/assets/components/UploadModelUpgradeModalHeader.vue'
 import { useDialogStore } from '@/stores/dialogStore'
 
+// Contents bring their own width and padding — shrink-wrap the chrome and
+// zero the section padding (the PrimeVue `pt` overrides this replaces).
+const uploadDialogComponentProps = {
+  renderer: 'reka',
+  contentClass: 'w-fit max-w-[calc(100vw-1rem)] sm:max-w-[calc(100vw-1rem)]',
+  headerClass: 'py-0 pl-0',
+  bodyClass: 'p-0 overflow-y-hidden'
+} as const
+
 export function useModelUpload(
   onUploadSuccess?: () => Promise<unknown> | void
 ) {
@@ -20,12 +29,7 @@ export function useModelUpload(
         key: 'upload-model-upgrade',
         headerComponent: UploadModelUpgradeModalHeader,
         component: UploadModelUpgradeModal,
-        dialogComponentProps: {
-          pt: {
-            header: 'py-0! pl-0!',
-            content: 'p-0! overflow-y-hidden!'
-          }
-        }
+        dialogComponentProps: uploadDialogComponentProps
       })
     } else {
       dialogStore.showDialog({
@@ -37,12 +41,7 @@ export function useModelUpload(
             await onUploadSuccess?.()
           }
         },
-        dialogComponentProps: {
-          pt: {
-            header: 'py-0! pl-0!',
-            content: 'p-0! overflow-y-hidden!'
-          }
-        }
+        dialogComponentProps: uploadDialogComponentProps
       })
     }
   }
