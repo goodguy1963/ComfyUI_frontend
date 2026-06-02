@@ -45,7 +45,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | --- | --- | --- | --- |
 | D1 | Add stronger visual assertions for low-detail and far-zoom node rendering. | Complete | Added canvas draw assertions and low-detail strip assertions. |
 | D2 | Fix first startup/workflow-load synchronous frontend block. | Complete | Removed duplicate bootstrap replay and chunked topology seeding. |
-| D3 | Extend transient layout buffering from Vue node drag to resize where safe. | Pending | Must preserve widget min-content resize behavior. |
+| D3 | Extend transient layout buffering from Vue node drag to resize where safe. | Complete: already satisfied | Resize preview is DOM-only and commits layout once. |
 | D4 | Add DOMRect attribution after R5 to prove remaining slot/layout reads. | Pending | Needed before claiming slot geometry is fully pan-free. |
 | D5 | Implement true delta-mounted node registry instead of computed list rebuild. | Pending | R4 added hysteresis only. |
 | D6 | Add velocity-aware viewport overscan/hysteresis tuning. | Pending | Should reduce edge pop-in without overmounting. |
@@ -428,3 +428,20 @@ Interpretation:
 - The first observable render moved much earlier in the load timeline.
 - Replacer workflow load dropped substantially in the normal probe.
 - Close pan remains noisy; this task was startup/load focused.
+
+### D3 Resize Fast-Path Verification
+
+Decision:
+
+- No additional resize buffering patch was needed.
+
+Reason:
+
+- `useNodeResize.ts` emits `phase: 'preview'` during pointer movement.
+- `LGraphNode.vue` handles preview by directly updating `--node-width`, `--node-height`, and preview position.
+- `layoutStore.batchUpdateNodeBounds()` is called only on commit.
+- This already matches the intended transient/commit split and avoids Yjs writes per resize frame.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src/renderer/extensions/vueNodes/interactions/resize/useNodeResize.test.ts src/renderer/extensions/vueNodes/components/LGraphNode.test.ts`
