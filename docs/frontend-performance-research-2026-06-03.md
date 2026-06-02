@@ -29,7 +29,7 @@ Date note: the local execution environment reported `2026-06-02`; the user reque
 | ID | Task | Status | Required tests |
 | --- | --- | --- | --- |
 | R1 | Stabilize instrumentation and comparison reporting for `main`, `research-start`, and `research-final`. | Complete | Benchmark probe runs on all available states. |
-| R2 | Add drag/pan fast-path instrumentation for Yjs transaction and layout sync rates before changing behavior. | Pending | Unit tests, typecheck, Replacer probe with instrumentation counters. |
+| R2 | Add drag/pan fast-path instrumentation for Yjs transaction and layout sync rates before changing behavior. | Complete | Unit tests, typecheck, browser API smoke. |
 | R3 | Implement interaction fast-path or transient layout buffering behind a feature flag. | Pending | Layout store tests, drag/resize tests, Replacer pan probe. |
 | R4 | Implement delta-based mounting or mount-set hysteresis behind a feature flag. | Pending | `viewportMountedNodes` tests, GraphCanvas tests, Replacer probe. |
 | R5 | Make slot geometry fully pan-free where safe. | Pending | Slot tracking tests, DOMRect attribution probe. |
@@ -111,3 +111,23 @@ Interpretation:
 - Treat this as a continuity table, not a final benchmark. These are single samples from already-created local probe outputs.
 - The cosmetic patch keeps the same mounted-node counts as the research-start state.
 - Close-pan latency remains noisy and is still an unresolved issue.
+
+### R2 Layout/Yjs/Sync Instrumentation
+
+Changes:
+
+- Added `window.__COMFY_LAYOUT_PERF__` via `src/renderer/core/layout/performance/layoutPerfInstrumentation.ts`.
+- Instrumented `layoutStore.applyOperation()`, Yjs transaction entry, changed node counts, node/global dispatches, `useLayoutSync()` scheduling, flushes, and dirty calls.
+- Wired the existing Replacer Playwright instrumentation to call `__COMFY_LAYOUT_PERF__.start()` / `stop()` and include `layoutPerf` counters.
+- Updated the Replacer Playwright test to set middle zoom before waiting for Vue nodes. This avoids the far-zoom canvas mode where mounted Vue nodes are intentionally `0`.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src/renderer/core/layout/performance/layoutPerfInstrumentation.test.ts src/renderer/core/layout/store/layoutStore.test.ts src/renderer/core/layout/sync/useLayoutSync.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- Browser smoke against `http://127.0.0.1:5274/` confirmed `window.__COMFY_LAYOUT_PERF__` exists and remains zeroed/inactive until started.
+
+Playwright caveat:
+
+- Running the full targeted Playwright test through repo global setup timed out after loading the Replacer workflow because the test environment tried to manage the live `ComfyUI/user` folder while the `8190` backend had `comfyui.db` locked.
+- Future full Playwright runs should use an isolated `TEST_COMFYUI_DIR`, not the live backend user directory.

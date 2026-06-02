@@ -7,6 +7,7 @@
 import { onUnmounted, ref } from 'vue'
 
 import type { useCanvasStore } from '@/renderer/core/canvas/canvasStore'
+import { recordLayoutPerfCounter } from '@/renderer/core/layout/performance/layoutPerfInstrumentation'
 import { layoutStore } from '@/renderer/core/layout/store/layoutStore'
 import { LayoutSource } from '@/renderer/core/layout/types'
 
@@ -27,6 +28,8 @@ export function useLayoutSync() {
     rafId = null
     isMicrotaskQueued = false
     if (!canvas?.graph || pendingNodeIds.size === 0) return
+    recordLayoutPerfCounter('syncFlushes')
+    recordLayoutPerfCounter('syncFlushedNodeIds', pendingNodeIds.size)
 
     let didMoveNode = false
     let didResizeNode = false
@@ -66,11 +69,15 @@ export function useLayoutSync() {
 
     pendingNodeIds.clear()
     if (didResizeNode) {
+      recordLayoutPerfCounter('syncDirtyForeground')
+      recordLayoutPerfCounter('syncDirtyBackground')
+      recordLayoutPerfCounter('syncDirtyBoth')
       canvas.setDirty(true, true)
       return
     }
 
     if (didMoveNode) {
+      recordLayoutPerfCounter('syncDirtyBackground')
       canvas.setDirty(false, true)
     }
   }
@@ -90,6 +97,7 @@ export function useLayoutSync() {
       if (isMicrotaskQueued) return
 
       isMicrotaskQueued = true
+      recordLayoutPerfCounter('syncScheduledMicrotasks')
       const gen = syncGeneration
       queueMicrotask(() => {
         if (gen !== syncGeneration) return
@@ -101,6 +109,7 @@ export function useLayoutSync() {
     if (rafId !== null || isMicrotaskQueued) return
 
     const gen = syncGeneration
+    recordLayoutPerfCounter('syncScheduledRafs')
     rafId = requestAnimationFrame(() => {
       if (gen !== syncGeneration) return
       flushPendingChanges(canvas)

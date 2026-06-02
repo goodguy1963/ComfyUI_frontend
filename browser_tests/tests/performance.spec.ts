@@ -186,6 +186,7 @@ async function installReplacerPanInstrumentation(page: Page) {
     win.__replacerPanPerfStart = () => {
       win[counterKey] = createCounters()
       win.__replacerPanPerfActive = true
+      win.__COMFY_LAYOUT_PERF__?.start?.()
 
       const canvas = win.app?.canvas
       if (canvas && !canvas.__replacerPanPerfOriginalSetDirty) {
@@ -295,6 +296,7 @@ async function installReplacerPanInstrumentation(page: Page) {
       const samples = win[counterKey].mountedNodeSamples
       return {
         ...win[counterKey],
+        layoutPerf: win.__COMFY_LAYOUT_PERF__?.stop?.(),
         mountedNodeMin: samples.length ? Math.min(...samples) : 0,
         mountedNodeMax: samples.length ? Math.max(...samples) : 0,
         mountedNodeAverage: samples.length
@@ -1000,6 +1002,10 @@ test.describe('Performance', { tag: ['@perf'] }, () => {
     await comfyPage.settings.setSetting('Comfy.VueNodes.Enabled', true)
     await installReplacerPanInstrumentation(comfyPage.page)
     await comfyPage.workflow.loadWorkflowFile(REPLACER_WORKFLOW_PATH)
+    await comfyPage.page.waitForFunction(
+      () => (window.app?.canvas?.graph?._nodes?.length ?? 0) > 0
+    )
+    await comfyPage.canvasOps.setScale(0.35)
     await comfyPage.vueNodes.waitForNodes()
 
     for (let i = 0; i < 30; i++) {

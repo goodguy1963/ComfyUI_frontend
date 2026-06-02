@@ -12,6 +12,7 @@ import * as Y from 'yjs'
 import { removeNodeTitleHeight } from '@/renderer/core/layout/utils/nodeSizeUtil'
 
 import { ACTOR_CONFIG } from '@/renderer/core/layout/constants'
+import { recordLayoutPerfCounter } from '@/renderer/core/layout/performance/layoutPerfInstrumentation'
 import { LayoutSource } from '@/renderer/core/layout/types'
 import type {
   BatchUpdateBoundsOperation,
@@ -849,6 +850,7 @@ class LayoutStoreImpl implements LayoutStore {
    * Apply a layout operation using Yjs transactions
    */
   applyOperation(operation: LayoutOperation): void {
+    recordLayoutPerfCounter('layoutOperations')
     // Create change object outside transaction so we can use it after
     const change: LayoutChange = {
       type: 'update',
@@ -859,6 +861,7 @@ class LayoutStoreImpl implements LayoutStore {
     }
 
     // Use Yjs transaction for atomic updates
+    recordLayoutPerfCounter('yjsTransactions')
     this.ydoc.transact(() => {
       // Add operation to log
       this.yoperations.push([operation])
@@ -922,6 +925,7 @@ class LayoutStoreImpl implements LayoutStore {
    * Finalize operation after transaction
    */
   private finalizeOperation(change: LayoutChange): void {
+    recordLayoutPerfCounter('changedNodeIds', change.nodeIds.length)
     // Update version
     this.version++
 
@@ -930,6 +934,7 @@ class LayoutStoreImpl implements LayoutStore {
     change.nodeIds.forEach((nodeId) => {
       const trigger = this.nodeTriggers.get(nodeId)
       if (trigger) {
+        recordLayoutPerfCounter('nodeRefTriggers')
         trigger()
       }
     })
@@ -1483,6 +1488,7 @@ class LayoutStoreImpl implements LayoutStore {
   }
 
   private notifyChange(change: LayoutChange): void {
+    recordLayoutPerfCounter('globalChangeDispatches')
     this.changeListeners.forEach((listener) => {
       try {
         listener(change)
@@ -1493,6 +1499,7 @@ class LayoutStoreImpl implements LayoutStore {
   }
 
   private notifyNodeChange(change: LayoutChange): void {
+    recordLayoutPerfCounter('nodeChangeDispatches')
     for (const nodeId of new Set(change.nodeIds)) {
       const listeners = this.nodeChangeListeners.get(nodeId)
       if (!listeners) continue
