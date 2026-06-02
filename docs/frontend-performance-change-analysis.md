@@ -1,8 +1,8 @@
 # Frontend Performance Change Analysis
 
-Baseline: local `main` `HEAD` in `ComfyUI_frontend`.
+Baseline: originally local `main` `HEAD` in `ComfyUI_frontend`; later benchmark-report sections include a fair comparison against latest `origin/main` at `f61a3212a`.
 
-Scope: the current working tree contains uncommitted frontend changes in 57 tracked files plus several new test/helper files. The repo is currently on `main` and is reported as 32 commits behind `origin/main`; this analysis compares the local changes against the local `main` baseline, not against the remote branch tip.
+Scope: this analysis was written for the initial broad optimization set. The branch is now `perf/replacer-pan-optimizations` and includes additional targeted commits through `433494bbf Render far zoom nodes on canvas`. Read `docs/frontend-performance-benchmark-report.md` for the current complete change inventory and latest fair `origin/main` comparison.
 
 ## Executive summary
 

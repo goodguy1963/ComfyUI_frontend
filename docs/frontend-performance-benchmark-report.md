@@ -2,6 +2,256 @@
 
 Date: 2026-06-02
 
+## Current Status
+
+Branch: `perf/replacer-pan-optimizations`
+
+Latest tested branch commit: `433494bbf Render far zoom nodes on canvas`
+
+Upstream comparison point: `origin/main` at `f61a3212a9f999b36b76694bade8fa3689b1dde5`
+
+Frontend version state:
+
+- Latest release tag found: `v1.46.7`.
+- `origin/main` describes as `v1.46.7-8-gf61a3212a`.
+- No separate frontend `nightly` branch was found. The repo comments identify `main` as the source for nightly builds, so `origin/main` is the latest/nightly-like source for this comparison.
+
+Windows tooling status:
+
+- `pnpm` requirement is satisfied with `pnpm 11.3.0`.
+- Current machine Node is `22.21.1`, while the latest frontend declares `node >=25`.
+- Vite dev serving works on this machine, but a clean latest-main development environment should use Node `>=25`.
+
+Performance-test server mode:
+
+For the latest fair comparisons, both `origin/main` and this branch were run with the same dev-server flags:
+
+```powershell
+DISABLE_VUE_PLUGINS=true
+DEV_SERVER_COMFYUI_URL=http://127.0.0.1:8190
+```
+
+This matters because Vue DevTools and dev-only Vue plugins add measurable overhead and console noise. With plugins enabled, app readiness and some input latencies were worse. Fair comparisons must keep this setting identical for both branches.
+
+## Complete Change Inventory
+
+The branch contains one large initial optimization commit plus later targeted commits. This is the current list of performance-relevant work.
+
+### 1. Initial Vue Pan Optimization Set
+
+Commit: `4cd064f5b Optimize Vue node pan performance`
+
+Main areas changed:
+
+- Added realistic Playwright performance coverage and helper support for loading the Replacer workflow from disk.
+- Added benchmark reports and slowdown analysis docs.
+- Added viewport-based Vue node mounting:
+  - `src/components/graph/GraphCanvas.vue`
+  - `src/components/graph/viewportMountedNodes.ts`
+  - `src/renderer/core/spatial/SpatialIndex.ts`
+- Added motion/detail-state handling for Vue nodes:
+  - `src/renderer/extensions/vueNodes/components/LGraphNode.vue`
+  - `src/renderer/core/layout/transform/TransformPane.vue`
+- Added a transform fallback/snapshot drawing helper:
+  - `src/renderer/core/layout/transform/panSnapshotCanvas.ts`
+- Reduced slot/layout measurement work:
+  - `src/renderer/extensions/vueNodes/composables/useSlotElementTracking.ts`
+  - `src/renderer/extensions/vueNodes/composables/useVueNodeResizeTracking.ts`
+  - `src/renderer/core/layout/sync/useLayoutSync.ts`
+  - `src/renderer/core/layout/store/layoutStore.ts`
+- Optimized LiteGraph link/slot drawing and graph cleanup:
+  - `src/lib/litegraph/src/LGraphCanvas.ts`
+  - `src/renderer/core/canvas/litegraph/slotCalculations.ts`
+  - `src/lib/litegraph/src/linkDeduplication.ts`
+  - `src/lib/litegraph/src/LGraph.ts`
+- Reduced reactive churn in graph/node lifecycle management:
+  - `src/composables/graph/useGraphNodeManager.ts`
+  - `src/composables/graph/useVueNodeLifecycle.ts`
+- Reduced store churn:
+  - `src/stores/queueStore.ts`
+  - `src/stores/nodeOutputStore.ts`
+  - `src/stores/executionStore.ts`
+  - `src/scripts/app.ts`
+
+What worked well:
+
+- The repeated Replacer benchmark showed a stable improvement versus original local `main`: median average frame time improved from about `41.9ms` to `16.8-16.9ms`, and p95 improved from `66.7ms` to `16.8ms`.
+- Link drawing and production DOM measurement were confirmed bottlenecks and were reduced.
+
+What remained weak:
+
+- The first optimization set was broad and complex.
+- Some small changes had noisy or neutral standalone results.
+- Middle/close pan still has occasional bad input-latency samples.
+
+### 2. Minimap Pan Polling Skip
+
+Commit: `b65298dd3 Skip minimap graph polling during canvas pan`
+
+Change:
+
+- During active canvas drag, minimap viewport syncing continues, but minimap graph/node change polling is skipped.
+
+Measured effect:
+
+- `LayoutStoreDataSource.getNodes()` self time dropped from `264.4ms` to `15.0ms` in the CPU profile window.
+- Replacer median script duration dropped from `1042.6ms` to `382.5ms`.
+
+Assessment:
+
+- This was a strong CPU-profile-driven fix.
+- It does not change frame p95 once the benchmark is already at frame budget, but it removes real wasted script work.
+
+### 3. Minimap Node Lookup Cleanup
+
+Commit: `00256eb27 Optimize minimap layout node lookup`
+
+Change:
+
+- Replaced repeated `graph._nodes.find(...)` scans with `graph.getNodeById(...)`.
+
+Measured effect:
+
+- No meaningful pan-frame win after minimap polling was already skipped during drag.
+- It remains a valid scalability cleanup because it removes an O(n^2) lookup pattern from minimap data rebuilds.
+
+### 4. Malformed Number Widget Handling
+
+Commits:
+
+- `3ddfc027e Handle malformed number widget values`
+- `fc8651a55 Accept boolean malformed number widget values`
+
+Change:
+
+- Made `WidgetInputNumber` tolerate malformed string/boolean values that appear in the Replacer workflow/custom-node state.
+
+Effect:
+
+- This is mainly correctness and warning reduction.
+- It prevents bad widget values from producing repeated Vue warnings and fragile numeric coercion paths.
+
+### 5. Dev Warning Overhead Reduction
+
+Commit: `d8297e69c Reduce dev warning overhead for large workflows`
+
+Change:
+
+- Defaulted missing Comfy badge state to `false` instead of passing `undefined`.
+- Reduced heavy `SubgraphNode.configure` warning payloads.
+
+Effect:
+
+- Reduces console warning spam and object formatting cost on large/malformed workflows.
+- This matters most in dev/testing, where console work can distort performance.
+
+### 6. Medium-Zoom Low Detail
+
+Commit: `1703b07aa Use low detail nodes at medium zoom`
+
+Change:
+
+- Raised stable low-detail Vue node threshold to apply low-detail rendering at medium zoom.
+
+Effect:
+
+- In the Replacer probe, middle zoom had many mounted nodes but a large fraction switched to low-detail rendering.
+- Earlier samples showed middle wheel/pan improvements after this change, but later fair runs still showed noisy middle/close pan latency. Treat this as useful but not sufficient.
+
+### 7. Viewport Overscan Reduction
+
+Commit: `10bc36b40 Reduce Vue node viewport overscan`
+
+Change:
+
+- Reduced Vue node viewport overscan from `0.35` to `0.08`.
+
+Measured effect:
+
+- Far mounted DOM before far-canvas mode: about `284 -> 240`.
+- Middle mounted DOM: about `100 -> 66`.
+- Close mounted DOM: about `34 -> 20`.
+
+Assessment:
+
+- This is a real DOM reduction.
+- It cannot solve far zoom by itself because many nodes are genuinely visible at far zoom.
+
+### 8. Latest Main Merge
+
+Commit: `952f63e32 Merge remote-tracking branch 'origin/main' into perf/replacer-pan-optimizations`
+
+Change:
+
+- Brought the branch up to latest upstream `main` at `f61a3212a`.
+- Updated package state to frontend version `1.46.7`.
+
+Windows note:
+
+- After the merge, dependencies needed to be synced because Vite required `@iconify/tools`.
+- `corepack pnpm install` mostly completed but the repo `prepare` script failed on Windows because it uses Unix shell syntax and `true`.
+- The needed packages were installed and Vite served correctly afterward.
+
+### 9. Far-Zoom Canvas Mode
+
+Commit: `433494bbf Render far zoom nodes on canvas`
+
+Change:
+
+- Added `src/components/graph/FarZoomNodeCanvas.vue`.
+- At zoom `<= 0.18`, Vue node DOM is no longer mounted.
+- Nodes are rendered as simplified canvas shapes using the existing `panSnapshotCanvas` drawing helper.
+- Medium and close zoom still use normal Vue nodes.
+
+Measured effect:
+
+- Far zoom mounted Vue nodes dropped to `0`.
+- In the latest fair comparison, `origin/main` mounted all `291` Vue nodes at far/middle/close zoom; this branch mounted `0` at far, `66` at middle, and `20` at close.
+
+Assessment:
+
+- This directly fixes the far-zoom DOM bottleneck.
+- It does not fix middle/close panning. Those are now a separate problem.
+
+## Latest Fair Comparison Against Main
+
+Both runs used:
+
+- Frontend port: `5274`
+- Backend: `http://127.0.0.1:8190`
+- Workflow: `ComfyUI/user/default/workflows/replacer creative i2v stable Parted 2.8_dev.json`
+- Flags: `DISABLE_VUE_PLUGINS=true`, `DEV_SERVER_COMFYUI_URL=http://127.0.0.1:8190`
+- Main: `origin/main @ f61a3212a`
+- Branch: `perf/replacer-pan-optimizations @ 433494bbf`
+
+| Replacer probe | Main | Branch |
+| --- | ---: | ---: |
+| Mounted nodes, far zoom | 291 | 0 |
+| Mounted nodes, middle zoom | 291 | 66 |
+| Mounted nodes, close zoom | 291 | 20 |
+| Far pan action-to-paint | 85.4 ms | 46.2 ms |
+| Far wheel action-to-paint | 79.6 ms | 52.6 ms |
+| Middle pan action-to-paint | 47.4 ms | 109.9 ms |
+| Middle wheel action-to-paint | 57.3 ms | 46.6 ms |
+| Close pan action-to-paint | 41.0 ms | 102.0 ms |
+| Close wheel action-to-paint | 69.7 ms | 56.0 ms |
+
+Interpretation:
+
+- The branch clearly improves far zoom DOM cost and far zoom input latency.
+- The branch clearly reduces mounted Vue DOM at all tested zoom levels.
+- Middle and close pan latency are still not solved and were worse in this single fair run. Pan samples are noisy, but this is enough to avoid claiming a universal pan improvement.
+- Workflow load time was not improved in this fair run. Treat load time as an open problem.
+
+Current honest status:
+
+- Fixed: far-zoom Vue DOM bottleneck.
+- Improved: far-zoom wheel/pan responsiveness.
+- Improved: repeated Replacer pan frame budget versus older original local main in the earlier benchmark series.
+- Not fixed: middle/close first-input pan latency.
+- Not fixed: workflow load/startup time.
+- Needs next profiling: why middle/close pan sometimes stalls despite much lower mounted DOM count.
+
 ## Environment
 
 - Backend: `http://127.0.0.1:8190`
@@ -20,7 +270,7 @@ Important caveats:
 - This is a single-sample local run. Treat results as directional, not statistically stable.
 - The backend was started with normal custom nodes disabled and only `ComfyUI_devtools` whitelisted. This removes unrelated backend startup/custom-node noise, but it is not identical to a fully loaded user backend.
 - The new `vue renderer large graph > zoom out culling` test was excluded from the comparison because the baseline does not satisfy the changed assertion.
-- The repo is 32 commits behind `origin/main`; this compares against local `main` `HEAD`.
+- This original benchmark section compares against local `main` `HEAD`. Later sections include the full `8190` backend and the latest fair comparison against `origin/main`.
 
 ## Results
 
