@@ -37,7 +37,7 @@
             />
           </template>
           <template v-else>
-            <DialogHeader>
+            <DialogHeader :class="item.dialogComponentProps.headerClass">
               <component
                 :is="item.headerComponent"
                 v-if="item.headerComponent"
@@ -58,14 +58,24 @@
                 />
               </div>
             </DialogHeader>
-            <div class="flex-1 overflow-auto px-4 py-2">
+            <div
+              :class="
+                cn(
+                  'flex-1 overflow-auto px-4 py-2',
+                  item.dialogComponentProps.bodyClass
+                )
+              "
+            >
               <component
                 :is="item.component"
                 v-bind="item.contentProps"
                 :maximized="item.dialogComponentProps.maximized"
               />
             </div>
-            <DialogFooter v-if="item.footerComponent">
+            <DialogFooter
+              v-if="item.footerComponent"
+              :class="item.dialogComponentProps.footerClass"
+            >
               <component :is="item.footerComponent" v-bind="item.footerProps" />
             </DialogFooter>
           </template>
@@ -108,6 +118,8 @@
 
 <script setup lang="ts">
 import PrimeDialog from 'primevue/dialog'
+
+import { cn } from '@comfyorg/tailwind-utils'
 
 import Dialog from '@/components/ui/dialog/Dialog.vue'
 import DialogClose from '@/components/ui/dialog/DialogClose.vue'
