@@ -1,11 +1,39 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   buildPanSnapshotPlan,
+  drawPanSnapshot,
   getSnapshotDeltaTransform,
   type PanSnapshotCamera,
+  type PanSnapshotDrawNode,
   type PanSnapshotNode
 } from './panSnapshotCanvas'
+
+function createMockCanvasContext() {
+  return {
+    canvas: { width: 1, height: 1 },
+    setTransform: vi.fn(),
+    clearRect: vi.fn(),
+    scale: vi.fn(),
+    beginPath: vi.fn(),
+    moveTo: vi.fn(),
+    lineTo: vi.fn(),
+    arcTo: vi.fn(),
+    closePath: vi.fn(),
+    fill: vi.fn(),
+    stroke: vi.fn(),
+    fillText: vi.fn(),
+    measureText: vi.fn((text: string) => ({ width: text.length * 6 })),
+    textBaseline: '',
+    fillStyle: '',
+    globalAlpha: 1,
+    lineWidth: 1,
+    strokeStyle: '',
+    font: ''
+  } as unknown as CanvasRenderingContext2D & {
+    fillText: ReturnType<typeof vi.fn>
+  }
+}
 
 describe('panSnapshotCanvas', () => {
   it('projects graph nodes into viewport screen coordinates', () => {
@@ -85,6 +113,59 @@ describe('panSnapshotCanvas', () => {
 
     expect(node.headerFill).toBe('#334155')
     expect(node.bodyFill).toBe('#1f2937')
+  })
+
+  it('does not draw title text for far-zoom compact nodes', () => {
+    const ctx = createMockCanvasContext()
+    const node: PanSnapshotDrawNode = {
+      id: 'far',
+      title: 'Far Node',
+      x: 10,
+      y: 10,
+      width: 120,
+      height: 50,
+      radius: 4,
+      titleHeight: 5,
+      headerFill: '#334155',
+      bodyFill: '#1f2937',
+      stroke: 'rgba(148, 163, 184, 0.45)',
+      titleColor: 'white',
+      showTitle: false,
+      titleFontSize: 9
+    }
+
+    drawPanSnapshot(ctx, [node], { width: 300, height: 200 }, 1)
+
+    expect(ctx.fillText).not.toHaveBeenCalled()
+  })
+
+  it('draws title text when snapshot title is enabled', () => {
+    const ctx = createMockCanvasContext()
+    const node: PanSnapshotDrawNode = {
+      id: 'mid',
+      title: 'Readable Node',
+      x: 10,
+      y: 10,
+      width: 160,
+      height: 80,
+      radius: 4,
+      titleHeight: 18,
+      headerFill: '#334155',
+      bodyFill: '#1f2937',
+      stroke: 'rgba(148, 163, 184, 0.45)',
+      titleColor: 'white',
+      showTitle: true,
+      titleFontSize: 11
+    }
+
+    drawPanSnapshot(ctx, [node], { width: 300, height: 200 }, 1)
+
+    expect(ctx.fillText).toHaveBeenCalledWith(
+      'Readable Node',
+      20,
+      19,
+      140
+    )
   })
 
   it('drops nodes that are too small or fully offscreen', () => {

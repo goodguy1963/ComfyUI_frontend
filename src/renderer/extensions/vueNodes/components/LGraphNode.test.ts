@@ -526,7 +526,11 @@ describe('LGraphNode', () => {
     expect(screen.getByTestId('node-low-detail-header')).toHaveTextContent(
       'Test Node'
     )
+    expect(screen.getByTestId('node-low-detail-header')).toHaveClass(
+      'overflow-hidden'
+    )
     expect(screen.queryByTestId('node-header-stub')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('node-slots-stub')).not.toBeInTheDocument()
     expect(screen.queryByTestId('node-widgets-stub')).not.toBeInTheDocument()
   })
 

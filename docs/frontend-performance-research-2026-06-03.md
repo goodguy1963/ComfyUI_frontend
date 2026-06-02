@@ -22,7 +22,7 @@ Date note: the local execution environment reported `2026-06-02`; the user reque
 | --- | --- | --- | --- |
 | C1 | Fix low-detail Vue nodes that become blacked out without usable title information. | Complete | Targeted Vue node tests, full typecheck, Replacer visual/perf probe. |
 | C2 | Fix far-zoom canvas nodes with oversized titles or oversized header bars. | Complete | `panSnapshotCanvas` tests, Replacer far/middle/close probe. |
-| C3 | Add or update visual assertions for far-zoom and low-detail rendering consistency. | Pending | Unit tests plus screenshot or canvas probe where feasible. |
+| C3 | Add or update visual assertions for far-zoom and low-detail rendering consistency. | Complete | Unit tests plus canvas draw assertions. |
 
 ### R22 Implementation Sequence
 
@@ -43,7 +43,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 
 | ID | Task | Status | Notes |
 | --- | --- | --- | --- |
-| D1 | Add stronger visual assertions for low-detail and far-zoom node rendering. | Pending | Completes C3. Unit-level first; screenshot/canvas probe if stable. |
+| D1 | Add stronger visual assertions for low-detail and far-zoom node rendering. | Complete | Added canvas draw assertions and low-detail strip assertions. |
 | D2 | Fix startup/workflow-load synchronous frontend block. | Pending | R7 timeline shows a long block after file submission. |
 | D3 | Extend transient layout buffering from Vue node drag to resize where safe. | Pending | Must preserve widget min-content resize behavior. |
 | D4 | Add DOMRect attribution after R5 to prove remaining slot/layout reads. | Pending | Needed before claiming slot geometry is fully pan-free. |
@@ -66,6 +66,19 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 - Do not commit transient artifacts from `output_sessions/` or browser HAR files.
 
 ## Completed Task Evidence
+
+### D1/C3 Visual Assertions
+
+Changes:
+
+- Added draw-level `panSnapshotCanvas` tests to verify far-zoom compact nodes do not draw title text.
+- Added draw-level test to verify readable snapshot nodes still draw title text.
+- Strengthened the low-detail Vue node test to verify the cheap title strip remains visible while slots/widgets stay pruned.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src/renderer/core/layout/transform/panSnapshotCanvas.test.ts src/renderer/extensions/vueNodes/components/LGraphNode.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
 
 ### C1/C2 Cosmetic Node Visuals
 
