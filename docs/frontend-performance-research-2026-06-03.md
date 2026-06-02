@@ -33,7 +33,7 @@ Date note: the local execution environment reported `2026-06-02`; the user reque
 | R3 | Implement interaction fast-path or transient layout buffering for Vue node drag. | Complete | Layout store tests, drag tests, Replacer pan probe. |
 | R4 | Implement viewport mount-set hysteresis. | Complete | `viewportMountedNodes` tests, typecheck, Replacer probe. |
 | R5 | Make slot geometry pan-free for active canvas pan where cached offsets exist. | Complete | Slot tracking tests, typecheck, Replacer probe. |
-| R6 | Continue link/minimap phase separation only after profiling confirms the next hotspot. | Pending | CPU profile/probe comparison, minimap tests. |
+| R6 | Continue link/minimap phase separation only after profiling confirms the next hotspot. | Complete: no-op | Existing CPU profile and current probes do not justify another speculative link/minimap patch. |
 | R7 | Investigate startup/workflow-load regression against `main`. | Pending | App-ready/workflow-load probe, focused startup instrumentation. |
 | R8 | Produce final research report with `main` vs `research-start` vs `research-final`. | Pending | Full test summary and benchmark summary. |
 
@@ -247,3 +247,19 @@ Interpretation:
 - Mounted node counts stayed the same as R4.
 - Middle/close pan stayed in the improved range in this single sample.
 - A DOMRect attribution run is still needed before claiming DOM reads are fully eliminated during all pan cases.
+
+### R6 Link/Minimap Follow-Up Decision
+
+Decision:
+
+- No new link or minimap behavior change was made in this task.
+
+Reason:
+
+- Earlier research already reduced normal link drawing and minimap polling substantially.
+- Current R4/R5 probe samples show the next visible problem is still noisy interaction latency and startup/workflow-load behavior, not a freshly confirmed link/minimap hotspot.
+- R22 explicitly recommends continuing link/minimap phase separation only after profiling confirms the next hotspot. Making another patch here without attribution would make the research branch dirtier without a defensible target.
+
+Next profiling requirement:
+
+- Run a fresh CPU/callsite attribution pass after the startup/load task or after repeated R5 samples show a stable remaining pan hotspot.
