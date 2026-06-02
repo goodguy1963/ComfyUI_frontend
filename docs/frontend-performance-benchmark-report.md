@@ -259,3 +259,50 @@ Interpretation:
 - The pointer rect cache is confirmed to remove the targeted production geometry reads: `adjustMouseEvent()` move reads go from `60` to `0`, and total rect reads drop from `835` to `774`.
 - The pointer cache is not a large standalone frame-time win. Branch After has the same p95, slightly lower median average frame, and slightly higher median task/script time than Branch Before. Treat this as a small cleanup, not the next major optimization.
 - The next performance block is remaining script time around the pan loop. The best next task is a CPU-profile pass on Branch After, focused on why median task duration is still about `4.7s` even after link drawing and production rect reads have been reduced.
+
+## CPU Profile: Minimap Graph Polling
+
+A Chromium DevTools CPU profile was captured around the same Replacer middle-button pan on Branch After.
+
+Artifacts:
+
+- `output_sessions/replacer-cpu-profile-20260602/branch-after-replacer-pan-analysis.json`
+- `output_sessions/replacer-cpu-profile-20260602/after-minimap-skip-replacer-pan.cpuprofile`
+- `output_sessions/replacer-cpu-profile-20260602/minimap-skip-profile-comparison.json`
+- `output_sessions/replacer-after-minimap-skip-20260602/summary.json`
+
+The largest app-level hotspot was minimap graph polling. The minimap was checking for graph/node changes on every RAF during canvas pan, rebuilding all minimap node data even though only the viewport rectangle needed to move.
+
+Profile result:
+
+| CPU profile bucket | Before | After |
+| --- | ---: | ---: |
+| Total profile window | 6660.1 ms | 6292.5 ms |
+| `LayoutStoreDataSource.getNodes()` self time | 264.4 ms | 15.0 ms |
+| `checkForChangesInternal()` self time | 202.3 ms | 7.5 ms |
+| `useMinimap` RAF self time | 13.7 ms | 2.1 ms |
+
+Change made:
+
+- Skip minimap graph change detection while `canvas.dragging_canvas && canvas.pointer.isDown`.
+- Keep minimap viewport syncing active, so the viewport rectangle can still track canvas movement during pan.
+
+Replacer pan benchmark after the minimap change, median of 3:
+
+| Replacer Vue pan | Branch After before minimap skip | After minimap skip |
+| --- | ---: | ---: |
+| Total duration | 5553.3 ms | 5365.7 ms |
+| Task duration | 4656.7 ms | 3892.5 ms |
+| Script duration | 1042.6 ms | 382.5 ms |
+| Average frame | 16.8 ms | 16.8 ms |
+| P95 frame | 16.8 ms | 16.8 ms |
+| Layouts | 9 | 9 |
+| Total blocking time | 0 ms | 0 ms |
+| `getBoundingClientRect()` calls | 774 | 774 |
+| `drawConnections()` duration | 25.5 ms | 23.9 ms |
+| `computeVisibleNodes()` duration | 15.2 ms | 12.7 ms |
+
+Interpretation:
+
+- This is a real CPU reduction, mainly in script time, without changing the frame p95 because the benchmark was already at the frame budget after the earlier link-drawing and slot-measurement fixes.
+- The next profile target is no longer minimap graph polling. The remaining app self-time is fragmented across normal canvas/Vue/layout work, with no single hotspot comparable to the minimap polling issue.
