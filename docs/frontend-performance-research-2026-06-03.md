@@ -35,7 +35,7 @@ Date note: the local execution environment reported `2026-06-02`; the user reque
 | R5 | Make slot geometry pan-free for active canvas pan where cached offsets exist. | Complete | Slot tracking tests, typecheck, Replacer probe. |
 | R6 | Continue link/minimap phase separation only after profiling confirms the next hotspot. | Complete: no-op | Existing CPU profile and current probes do not justify another speculative link/minimap patch. |
 | R7 | Investigate startup/workflow-load regression against `main`. | Complete | Load timeline probe on current research branch. |
-| R8 | Produce final research report with `main` vs `research-start` vs `research-final`. | Pending | Full test summary and benchmark summary. |
+| R8 | Produce final research report with `main` vs `research-start` vs `research-final`. | Complete | Full test summary and benchmark summary. |
 
 ## Commit Policy
 
@@ -295,3 +295,46 @@ Interpretation:
 - This suggests the browser main thread is blocked for roughly `14s` during workflow load/setup after file submission.
 - The extension-manager busy flag was already false by the observable marks. The regression is more likely synchronous frontend graph/load/render initialization than backend/network wait.
 - Next implementation target should be startup/load phase splitting: visible/far-zoom surface first, deferred non-visible Vue node/lifecycle/index work second.
+
+## Final Validation
+
+Commands:
+
+- `node node_modules\vitest\vitest.mjs run *> output_sessions\final-research-vitest.log`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false *> output_sessions\final-research-typecheck.log`
+- `node output_sessions\replacer_input_latency_probe.cjs > output_sessions\final-research-replacer-probe.json`
+- `node scripts\replacer-probe-summary.cjs main=output_sessions\fair-main-branch-tests-20260602\main-replacer-probe.json research-start=output_sessions\fair-main-branch-tests-20260602\branch-replacer-probe.json research-final=output_sessions\final-research-replacer-probe.json`
+
+Automated tests:
+
+| Check | Result |
+| --- | --- |
+| Full Vitest | 828 passed files, 11194 passed tests, 8 skipped |
+| Typecheck | Passed |
+
+Final single-sample comparison:
+
+| Metric | main | research-start | research-final |
+| --- | ---: | ---: | ---: |
+| App ready | 5224 | 8548 | 9220 |
+| Workflow load | 9170 | 20278 | 27209 |
+| Probe total | 19327 | 33586 | 41554 |
+| Far mounted nodes | 291 | 0 | 0 |
+| Far pan | 70.1 | 56.0 | 33.2 |
+| Far wheel | 90.9 | 61.9 | 54.4 |
+| Middle mounted nodes | 291 | 66 | 76 |
+| Middle pan | 61.9 | 166.9 | 64.7 |
+| Middle wheel | 102.8 | 57.6 | 78.1 |
+| Close mounted nodes | 291 | 20 | 29 |
+| Close pan | 51.0 | 75.7 | 46.5 |
+| Close wheel | 105.7 | 62.2 | 66.6 |
+
+Final interpretation:
+
+- Interaction responsiveness improved materially compared with `research-start`.
+- Far zoom remains the clearest win: Vue DOM stays at `0`, and far pan is better than both comparison states in this final sample.
+- Middle pan recovered from the bad `research-start` result and is now close to main in this sample.
+- Close pan is slightly better than main in this sample.
+- Mounted node counts at middle/close increased because R4 hysteresis intentionally keeps recently visible nodes mounted longer to avoid edge churn.
+- Startup/workflow-load is not fixed. It is worse in the final single sample and remains the next major blocker.
+- The R7 timeline indicates the load issue is likely a long synchronous frontend block after workflow file submission.
