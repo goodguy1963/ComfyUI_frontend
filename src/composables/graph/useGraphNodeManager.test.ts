@@ -246,7 +246,7 @@ describe('Node Reactivity', () => {
     ])
   })
 
-  it('guards against synchronous same-node onNodeAdded re-entry during bootstrap', () => {
+  it('does not replay onNodeAdded for existing nodes during bootstrap', () => {
     const graph = new LGraph()
     const node = new LGraphNode('reroute')
     graph.add(node)
@@ -260,6 +260,10 @@ describe('Node Reactivity', () => {
     }
 
     expect(() => useGraphNodeManager(graph)).not.toThrow()
+
+    expect(replayCount).toBe(0)
+
+    graph.add(new LGraphNode('new-node'))
 
     expect(replayCount).toBe(1)
   })

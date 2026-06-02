@@ -30,6 +30,7 @@ function useVueNodeLifecycleIndividual() {
   const activeGraph = shallowRef<ActiveGraph | null>(null)
   const graphStateCache = new Map<ActiveGraph, CachedGraphState>()
   const { startSync, stopSync } = useLayoutSync()
+  let deferredTopologySeedGeneration = 0
 
   const getActiveWorkflowPath = () => workflowStore.activeWorkflow?.path ?? null
 
@@ -40,17 +41,35 @@ function useVueNodeLifecycleIndividual() {
       size: [node.size[0], node.size[1]] as [number, number]
     }))
     layoutStore.initializeFromLiteGraph(nodes)
+  }
 
-    // Seed reroutes into the Layout Store so hit-testing uses the new path
+  const seedTopologyFromGraph = async (
+    graph: ActiveGraph,
+    generation: number
+  ) => {
+    const yieldToBrowser = () =>
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, 0)
+      })
+
+    let processed = 0
     for (const reroute of graph.reroutes.values()) {
+      if (generation !== deferredTopologySeedGeneration) return
+
       const [x, y] = reroute.pos
       const parent = reroute.parentId ?? undefined
       const linkIds = Array.from(reroute.linkIds)
       layoutMutations.createReroute(reroute.id, { x, y }, parent, linkIds)
+
+      if (++processed % 100 === 0) {
+        await yieldToBrowser()
+      }
     }
 
-    // Seed existing links into the Layout Store (topology only)
+    processed = 0
     for (const link of graph._links.values()) {
+      if (generation !== deferredTopologySeedGeneration) return
+
       layoutMutations.createLink(
         link.id,
         link.origin_id,
@@ -58,10 +77,15 @@ function useVueNodeLifecycleIndividual() {
         link.target_id,
         link.target_slot
       )
+
+      if (++processed % 100 === 0) {
+        await yieldToBrowser()
+      }
     }
   }
 
   const deactivateActiveGraph = () => {
+    deferredTopologySeedGeneration++
     stopSync()
     activeGraph.value = null
     nodeManager.value = null
@@ -121,6 +145,7 @@ function useVueNodeLifecycleIndividual() {
     activeGraph.value = state.graph
     nodeManager.value = state.manager
     seedLayoutFromGraph(state.graph)
+    void seedTopologyFromGraph(state.graph, ++deferredTopologySeedGeneration)
 
     // Start sync AFTER seeding so bootstrap operations don't trigger
     // the Layout→LiteGraph writeback loop redundantly.

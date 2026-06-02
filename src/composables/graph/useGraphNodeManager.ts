@@ -941,15 +941,6 @@ export function useGraphNodeManager(graph: LGraph): GraphNodeManager {
   // Set up event listeners immediately
   const cleanup = setupEventListeners()
 
-  // Process any existing nodes after event listeners are set up
-  if (graph._nodes && graph._nodes.length > 0) {
-    graph._nodes.forEach((node: LGraphNode) => {
-      if (graph.onNodeAdded) {
-        graph.onNodeAdded(node)
-      }
-    })
-  }
-
   return {
     vueNodeData,
     getNode,

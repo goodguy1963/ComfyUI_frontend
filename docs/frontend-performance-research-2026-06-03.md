@@ -44,7 +44,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | ID | Task | Status | Notes |
 | --- | --- | --- | --- |
 | D1 | Add stronger visual assertions for low-detail and far-zoom node rendering. | Complete | Added canvas draw assertions and low-detail strip assertions. |
-| D2 | Fix startup/workflow-load synchronous frontend block. | Pending | R7 timeline shows a long block after file submission. |
+| D2 | Fix first startup/workflow-load synchronous frontend block. | Complete | Removed duplicate bootstrap replay and chunked topology seeding. |
 | D3 | Extend transient layout buffering from Vue node drag to resize where safe. | Pending | Must preserve widget min-content resize behavior. |
 | D4 | Add DOMRect attribution after R5 to prove remaining slot/layout reads. | Pending | Needed before claiming slot geometry is fully pan-free. |
 | D5 | Implement true delta-mounted node registry instead of computed list rebuild. | Pending | R4 added hysteresis only. |
@@ -373,3 +373,58 @@ Final interpretation:
 - Mounted node counts at middle/close increased because R4 hysteresis intentionally keeps recently visible nodes mounted longer to avoid edge churn.
 - Startup/workflow-load is not fixed. It is worse in the final single sample and remains the next major blocker.
 - The R7 timeline indicates the load issue is likely a long synchronous frontend block after workflow file submission.
+
+## Continued DeepResearch Implementation
+
+### D2 Startup / Workflow Load Split
+
+Changes:
+
+- Removed duplicate existing-node bootstrap replay in `useGraphNodeManager()`.
+  - Existing nodes are already extracted by `syncWithGraph()`.
+  - Replaying `graph.onNodeAdded()` for every existing node extracted all nodes again and created layout entries that lifecycle seeding later replaced.
+- Split lifecycle seeding into synchronous node layout seeding and asynchronous topology seeding.
+  - Node positions/sizes still seed immediately for first render.
+  - Reroutes and links seed in small async chunks so the browser can return to the event loop sooner.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src/composables/graph/useVueNodeLifecycle.test.ts src/composables/graph/useGraphNodeManager.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; $env:REPLACER_LOAD_TIMELINE_OUT='output_sessions\d2-async-topology-load-timeline.json'; node scripts\replacer-load-timeline.cjs`
+- `node output_sessions\replacer_input_latency_probe.cjs > output_sessions\d2-async-topology-replacer-probe.json`
+
+Load timeline result:
+
+| Mark | Before R7 sample | D2 after |
+| --- | ---: | ---: |
+| App ready | 4708 ms | 5654 ms |
+| Workflow file submitted | 4720 ms | 5665 ms |
+| First graph nodes observable | 18727 ms | 11293 ms |
+| First render surface observable | 18767 ms | 11335 ms |
+| Workflow idle observable | 18794 ms | 11353 ms |
+| Settled 5s | 23812 ms | 16373 ms |
+
+Replacer probe comparison against previous final sample:
+
+| Metric | before | after |
+| --- | ---: | ---: |
+| App ready | 9220 | 5690 |
+| Workflow load | 27209 | 12970 |
+| Probe total | 41554 | 23144 |
+| Far mounted nodes | 0 | 0 |
+| Far pan | 33.2 | 33.0 |
+| Far wheel | 54.4 | 48.1 |
+| Middle mounted nodes | 76 | 76 |
+| Middle pan | 64.7 | 49.0 |
+| Middle wheel | 78.1 | 49.7 |
+| Close mounted nodes | 29 | 29 |
+| Close pan | 46.5 | 67.3 |
+| Close wheel | 66.6 | 45.9 |
+
+Interpretation:
+
+- This is the first clear startup/load improvement after R7.
+- The first observable render moved much earlier in the load timeline.
+- Replacer workflow load dropped substantially in the normal probe.
+- Close pan remains noisy; this task was startup/load focused.
