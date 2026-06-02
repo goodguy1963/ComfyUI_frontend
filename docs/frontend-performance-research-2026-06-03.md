@@ -34,7 +34,7 @@ Date note: the local execution environment reported `2026-06-02`; the user reque
 | R4 | Implement viewport mount-set hysteresis. | Complete | `viewportMountedNodes` tests, typecheck, Replacer probe. |
 | R5 | Make slot geometry pan-free for active canvas pan where cached offsets exist. | Complete | Slot tracking tests, typecheck, Replacer probe. |
 | R6 | Continue link/minimap phase separation only after profiling confirms the next hotspot. | Complete: no-op | Existing CPU profile and current probes do not justify another speculative link/minimap patch. |
-| R7 | Investigate startup/workflow-load regression against `main`. | Pending | App-ready/workflow-load probe, focused startup instrumentation. |
+| R7 | Investigate startup/workflow-load regression against `main`. | Complete | Load timeline probe on current research branch. |
 | R8 | Produce final research report with `main` vs `research-start` vs `research-final`. | Pending | Full test summary and benchmark summary. |
 
 ## Commit Policy
@@ -263,3 +263,35 @@ Reason:
 Next profiling requirement:
 
 - Run a fresh CPU/callsite attribution pass after the startup/load task or after repeated R5 samples show a stable remaining pan hotspot.
+
+### R7 Startup / Workflow Load Timeline
+
+Change:
+
+- Added `scripts/replacer-load-timeline.cjs` to separate app ready, workflow file submit, first graph nodes, first render surface, workflow idle, and settled state.
+
+Command:
+
+```powershell
+$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'
+$env:REPLACER_LOAD_TIMELINE_OUT='output_sessions\r7-load-timeline-current.json'
+node scripts\replacer-load-timeline.cjs
+```
+
+Current research branch timeline:
+
+| Mark | Time |
+| --- | ---: |
+| App ready | 4708 ms |
+| Workflow file submitted | 4720 ms |
+| First graph nodes observable | 18727 ms |
+| First render surface observable | 18767 ms |
+| Workflow idle observable | 18794 ms |
+| Settled 5s | 23812 ms |
+
+Interpretation:
+
+- At the `workflow-file-submitted` mark, the state already reported `291` graph nodes and far-zoom canvas active, but the next observable mark did not run until about `18.7s`.
+- This suggests the browser main thread is blocked for roughly `14s` during workflow load/setup after file submission.
+- The extension-manager busy flag was already false by the observable marks. The regression is more likely synchronous frontend graph/load/render initialization than backend/network wait.
+- Next implementation target should be startup/load phase splitting: visible/far-zoom surface first, deferred non-visible Vue node/lifecycle/index work second.
