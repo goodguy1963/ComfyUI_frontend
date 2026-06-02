@@ -74,8 +74,8 @@ describe('TransformPane', () => {
       })
       await nextTick()
 
-      const transformPane = screen.getByTestId('transform-pane')
-      expect(transformPane.getAttribute('style')).toContain(
+      const livePane = screen.getByTestId('transform-pane-live')
+      expect(livePane.getAttribute('style')).toContain(
         'transform: scale(2) translate(100px, 50px)'
       )
     })

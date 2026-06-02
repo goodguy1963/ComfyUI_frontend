@@ -99,7 +99,7 @@ export function useMinimap({
       async () => {
         if (visible.value) {
           const activeCanvasPan =
-            canvas.value?.dragging_canvas && canvas.value.pointer.isDown
+            canvas.value?.dragging_canvas && canvas.value.pointer?.isDown
           if (activeCanvasPan) return
 
           const hasChanges = await graphManager.checkForChanges()

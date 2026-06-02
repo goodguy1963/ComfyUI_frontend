@@ -3,9 +3,9 @@ import { setActivePinia } from 'pinia'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { LGraph, LGraphNode, LLink, LiteGraph } from '@/lib/litegraph/src/litegraph'
-import { zeroUuid } from '@/lib/litegraph/src/utils/uuid'
 import { app } from '@/scripts/app'
 import { useExtensionStore } from '@/stores/extensionStore'
+import { zeroUuid } from '@/utils/uuid'
 
 class SinkNode extends LGraphNode {
   constructor(title?: string) {

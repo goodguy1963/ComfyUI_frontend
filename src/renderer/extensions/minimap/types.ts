@@ -14,6 +14,10 @@ export interface MinimapCanvas {
     offset: [number, number]
   }
   graph?: LGraph | null
+  dragging_canvas?: boolean
+  pointer?: {
+    isDown: boolean
+  }
   setDirty: (fg?: boolean, bg?: boolean) => void
 }
 

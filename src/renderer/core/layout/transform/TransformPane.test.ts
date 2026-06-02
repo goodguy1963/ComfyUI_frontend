@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/vue'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { computed, nextTick, ref } from 'vue'
 
+import type { LGraphCanvas } from '@/lib/litegraph/src/litegraph'
+
 const mocks = vi.hoisted(() => ({
   isTransforming: undefined as ReturnType<typeof ref<boolean>> | undefined,
   requestSlotLayoutSyncForAllNodes: vi.fn()
@@ -48,12 +50,21 @@ describe('TransformPane', () => {
   })
 
   it('requests slot sync after transform interaction settles', async () => {
-    render(TransformPane)
+    const canvas = {
+      ds: { scale: 1 }
+    } as LGraphCanvas
+
+    render(TransformPane, {
+      props: {
+        canvas
+      }
+    })
 
     mocks.isTransforming!.value = true
     await nextTick()
     expect(mocks.requestSlotLayoutSyncForAllNodes).not.toHaveBeenCalled()
 
+    canvas.ds.scale = 2
     mocks.isTransforming!.value = false
     await nextTick()
     expect(mocks.requestSlotLayoutSyncForAllNodes).toHaveBeenCalledOnce()

@@ -6,7 +6,7 @@ Date: 2026-06-02
 
 Branch: `perf/replacer-pan-optimizations`
 
-Latest tested branch commit: `433494bbf Render far zoom nodes on canvas`
+Latest tested branch state: this report commit, `Document fair performance test rerun`
 
 Upstream comparison point: `origin/main` at `f61a3212a9f999b36b76694bade8fa3689b1dde5`
 
@@ -478,31 +478,64 @@ Both runs used:
 - Workflow: `ComfyUI/user/default/workflows/replacer creative i2v stable Parted 2.8_dev.json`
 - Flags: `DISABLE_VUE_PLUGINS=true`, `DEV_SERVER_COMFYUI_URL=http://127.0.0.1:8190`
 - Main: `origin/main @ f61a3212a`
-- Branch: `perf/replacer-pan-optimizations @ 433494bbf`
+- Branch: `perf/replacer-pan-optimizations` after far-zoom canvas mode and test/typecheck fixes
+
+Artifacts:
+
+- `output_sessions/fair-main-branch-tests-20260602/main-replacer-probe.json`
+- `output_sessions/fair-main-branch-tests-20260602/branch-replacer-probe.json`
+- `output_sessions/fair-main-branch-tests-20260602/main-vitest.log`
+- `output_sessions/fair-main-branch-tests-20260602/branch-vitest-after-fixes.log`
+- `output_sessions/fair-main-branch-tests-20260602/main-typecheck.log`
+- `output_sessions/fair-main-branch-tests-20260602/branch-typecheck-after-fixes.log`
 
 | Replacer probe | Main | Branch |
 | --- | ---: | ---: |
 | Mounted nodes, far zoom | 291 | 0 |
 | Mounted nodes, middle zoom | 291 | 66 |
 | Mounted nodes, close zoom | 291 | 20 |
-| Far pan action-to-paint | 85.4 ms | 46.2 ms |
-| Far wheel action-to-paint | 79.6 ms | 52.6 ms |
-| Middle pan action-to-paint | 47.4 ms | 109.9 ms |
-| Middle wheel action-to-paint | 57.3 ms | 46.6 ms |
-| Close pan action-to-paint | 41.0 ms | 102.0 ms |
-| Close wheel action-to-paint | 69.7 ms | 56.0 ms |
+| App ready | 5224 ms | 8548 ms |
+| Replacer workflow load | 9170 ms | 20278 ms |
+| Probe total | 19327 ms | 33586 ms |
+| Far pan action-to-paint | 70.1 ms | 56.0 ms |
+| Far wheel action-to-paint | 90.9 ms | 61.9 ms |
+| Middle pan action-to-paint | 61.9 ms | 166.9 ms |
+| Middle wheel action-to-paint | 102.8 ms | 57.6 ms |
+| Close pan action-to-paint | 51.0 ms | 75.7 ms |
+| Close wheel action-to-paint | 105.7 ms | 62.2 ms |
+
+Automated test results from the same comparison pass:
+
+| Check | Main | Branch after fixes |
+| --- | --- | --- |
+| Full Vitest | 2 failed files, 35 failed tests, 819 passed files | 827 passed files, 11183 passed tests, 8 skipped |
+| Typecheck | Passed | Passed |
+
+Main Vitest failures:
+
+- `src/composables/node/useNodePricing.test.ts`
+- `src/services/customerEventsService.test.ts`
+- These failures are locale/number-formatting sensitive in this Windows/Berlin environment, for example decimal comma output where the test expects decimal point output.
+
+Branch-specific issues fixed after the first rerun:
+
+- `src/extensions/core/rerouteNode.test.ts` imported `zeroUuid` from a stale LiteGraph path; it now imports from `@/utils/uuid`.
+- `src/renderer/extensions/minimap/composables/useMinimap.ts` used LiteGraph pan-state fields not declared on the minimap canvas type; the minimap canvas type now declares the optional pan-state fields it reads.
+- `src/renderer/core/layout/transform/TransformPane.test.ts` expected slot sync after every interaction; the current implementation only syncs after scale-changing interactions.
+- `src/renderer/core/layout/__tests__/TransformPane.test.ts` expected transform style on the root pane; the performance change intentionally applies transform style directly to the live pane to avoid Vue template diff work during pan/zoom.
 
 Interpretation:
 
 - The branch clearly improves far zoom DOM cost and far zoom input latency.
 - The branch clearly reduces mounted Vue DOM at all tested zoom levels.
-- Middle and close pan latency are still not solved and were worse in this single fair run. Pan samples are noisy, but this is enough to avoid claiming a universal pan improvement.
-- Workflow load time was not improved in this fair run. Treat load time as an open problem.
+- Middle and close pan latency are still not solved. Middle pan was worse in this fair run, while middle/close wheel were better. Pan samples are noisy, but this is enough to avoid claiming a universal pan improvement.
+- App ready and workflow load time were worse on the branch in this fair run. Treat load/startup as an open problem separate from active interaction latency.
 
 Current honest status:
 
 - Fixed: far-zoom Vue DOM bottleneck.
 - Improved: far-zoom wheel/pan responsiveness.
+- Improved: branch automated test health versus latest main in this local Windows/Berlin run.
 - Improved: repeated Replacer pan frame budget versus older original local main in the earlier benchmark series.
 - Not fixed: middle/close first-input pan latency.
 - Not fixed: workflow load/startup time.
