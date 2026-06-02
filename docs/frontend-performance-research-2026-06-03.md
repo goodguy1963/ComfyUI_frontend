@@ -37,6 +37,28 @@ Date note: the local execution environment reported `2026-06-02`; the user reque
 | R7 | Investigate startup/workflow-load regression against `main`. | Complete | Load timeline probe on current research branch. |
 | R8 | Produce final research report with `main` vs `research-start` vs `research-final`. | Complete | Full test summary and benchmark summary. |
 
+## Remaining DeepResearch Backlog
+
+These items come from `docs/deep-research-r22.md`. They are intentionally split into smaller implementation commits for the research branch.
+
+| ID | Task | Status | Notes |
+| --- | --- | --- | --- |
+| D1 | Add stronger visual assertions for low-detail and far-zoom node rendering. | Pending | Completes C3. Unit-level first; screenshot/canvas probe if stable. |
+| D2 | Fix startup/workflow-load synchronous frontend block. | Pending | R7 timeline shows a long block after file submission. |
+| D3 | Extend transient layout buffering from Vue node drag to resize where safe. | Pending | Must preserve widget min-content resize behavior. |
+| D4 | Add DOMRect attribution after R5 to prove remaining slot/layout reads. | Pending | Needed before claiming slot geometry is fully pan-free. |
+| D5 | Implement true delta-mounted node registry instead of computed list rebuild. | Pending | R4 added hysteresis only. |
+| D6 | Add velocity-aware viewport overscan/hysteresis tuning. | Pending | Should reduce edge pop-in without overmounting. |
+| D7 | Rewrite `useGraphNodeManager` hot load path toward patch/incremental extraction. | Pending | Large startup/load candidate. |
+| D8 | Make `useLayoutSync` dirty/flush behavior more granular. | Pending | Use R2 counters to guide this. |
+| D9 | Profile and implement next confirmed link drawing optimization. | Pending | No speculative link work without a profile. |
+| D10 | Move minimap model toward event-driven updates. | Pending | Earlier pan skip helped; full event model remains. |
+| D11 | Add widget intrinsic sizing/cache API. | Pending | Correctness plus layout churn reduction. |
+| D12 | Continue queue/output/execution store selectorization. | Pending | Prior partial improvements exist; not complete. |
+| D13 | Prototype OffscreenCanvas for minimap or far-zoom layer. | Pending | Start with a contained canvas layer only. |
+| D14 | Prototype worker spatial query/snapshot planning. | Pending | No UI rewrite. |
+| D15 | Evaluate optional Rust/WASM geometry kernel after worker boundary exists. | Pending | Last step, not near-term. |
+
 ## Commit Policy
 
 - One implementation task per commit where possible.
