@@ -157,7 +157,6 @@ function useNodeDragIndividual() {
       y: canvasWithDelta.y - canvasOrigin.y
     }
 
-    // Move drag updates in one transaction to avoid per-node notify fan-out.
     const updates = [
       {
         nodeId,
@@ -183,7 +182,7 @@ function useNodeDragIndividual() {
       }
     }
 
-    mutations.batchMoveNodes(updates)
+    layoutStore.setTransientNodePositions(updates)
 
     if (selectedGroups && selectedGroups.length > 0 && lastCanvasDelta) {
       const frameDelta = {
@@ -278,8 +277,13 @@ function useNodeDragIndividual() {
 
       // Apply all snap updates in a single batched transaction
       if (boundsUpdates.length > 0) {
+        layoutStore.discardTransientNodePositions()
         layoutStore.batchUpdateNodeBounds(boundsUpdates)
+      } else {
+        layoutStore.commitTransientNodePositions()
       }
+    } else {
+      layoutStore.commitTransientNodePositions()
     }
 
     dragStartPos = null

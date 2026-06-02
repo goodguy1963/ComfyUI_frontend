@@ -22,6 +22,9 @@ const testState = vi.hoisted(() => {
       batchMoveNodes: vi.fn()
     },
     batchUpdateNodeBounds: vi.fn(),
+    setTransientNodePositions: vi.fn(),
+    commitTransientNodePositions: vi.fn(),
+    discardTransientNodePositions: vi.fn(),
     nodeSnap: {
       shouldSnap: vi.fn(() => false),
       applySnapToPosition: vi.fn((pos: { x: number; y: number }) => pos)
@@ -85,7 +88,10 @@ vi.mock('@/renderer/core/layout/store/layoutStore', () => ({
   layoutStore: {
     getNodeLayoutRef: (nodeId: string) =>
       ref(testState.nodeLayouts.get(nodeId) ?? null),
-    batchUpdateNodeBounds: testState.batchUpdateNodeBounds
+    batchUpdateNodeBounds: testState.batchUpdateNodeBounds,
+    setTransientNodePositions: testState.setTransientNodePositions,
+    commitTransientNodePositions: testState.commitTransientNodePositions,
+    discardTransientNodePositions: testState.discardTransientNodePositions
   }
 }))
 
@@ -134,6 +140,9 @@ describe('useNodeDrag', () => {
     testState.mutationFns.moveNode.mockReset()
     testState.mutationFns.batchMoveNodes.mockReset()
     testState.batchUpdateNodeBounds.mockReset()
+    testState.setTransientNodePositions.mockReset()
+    testState.commitTransientNodePositions.mockReset()
+    testState.discardTransientNodePositions.mockReset()
     testState.nodeSnap.shouldSnap.mockReset()
     testState.nodeSnap.shouldSnap.mockReturnValue(false)
     testState.nodeSnap.applySnapToPosition.mockReset()
@@ -171,11 +180,12 @@ describe('useNodeDrag', () => {
     handleDrag(pointerEvent(30, 40), '1')
     testState.requestAnimationFrameCallback?.(0)
 
-    expect(testState.mutationFns.batchMoveNodes).toHaveBeenCalledTimes(1)
-    expect(testState.mutationFns.batchMoveNodes).toHaveBeenCalledWith([
+    expect(testState.setTransientNodePositions).toHaveBeenCalledTimes(1)
+    expect(testState.setTransientNodePositions).toHaveBeenCalledWith([
       { nodeId: '1', position: { x: 120, y: 120 } },
       { nodeId: '2', position: { x: 220, y: 200 } }
     ])
+    expect(testState.mutationFns.batchMoveNodes).not.toHaveBeenCalled()
     expect(testState.mutationFns.moveNode).not.toHaveBeenCalled()
   })
 
@@ -192,11 +202,31 @@ describe('useNodeDrag', () => {
     handleDrag(pointerEvent(25, 30), '1')
     testState.requestAnimationFrameCallback?.(0)
 
-    expect(testState.mutationFns.batchMoveNodes).toHaveBeenCalledTimes(1)
-    expect(testState.mutationFns.batchMoveNodes).toHaveBeenCalledWith([
+    expect(testState.setTransientNodePositions).toHaveBeenCalledTimes(1)
+    expect(testState.setTransientNodePositions).toHaveBeenCalledWith([
       { nodeId: '1', position: { x: 70, y: 100 } }
     ])
+    expect(testState.mutationFns.batchMoveNodes).not.toHaveBeenCalled()
     expect(testState.mutationFns.moveNode).not.toHaveBeenCalled()
+  })
+
+  it('commits transient drag positions once on endDrag', () => {
+    testState.selectedNodeIds.value = new Set(['1'])
+    testState.nodeLayouts.set('1', {
+      position: { x: 50, y: 80 },
+      size: { width: 180, height: 110 }
+    })
+
+    const { startDrag, handleDrag, endDrag } = useNodeDrag()
+
+    startDrag(pointerEvent(5, 10), '1')
+    handleDrag(pointerEvent(25, 30), '1')
+    testState.requestAnimationFrameCallback?.(0)
+    endDrag({} as PointerEvent, '1')
+
+    expect(testState.setTransientNodePositions).toHaveBeenCalledTimes(1)
+    expect(testState.commitTransientNodePositions).toHaveBeenCalledTimes(1)
+    expect(testState.batchUpdateNodeBounds).not.toHaveBeenCalled()
   })
 
   it('cancels pending RAF and applies snap updates on endDrag', () => {
@@ -219,6 +249,8 @@ describe('useNodeDrag', () => {
 
     expect(testState.cancelAnimationFrame).toHaveBeenCalledTimes(1)
     expect(testState.cancelAnimationFrame).toHaveBeenCalledWith(1)
+    expect(testState.discardTransientNodePositions).toHaveBeenCalledTimes(1)
+    expect(testState.commitTransientNodePositions).not.toHaveBeenCalled()
     expect(testState.batchUpdateNodeBounds).toHaveBeenCalledTimes(1)
     expect(testState.batchUpdateNodeBounds).toHaveBeenCalledWith([
       {
@@ -251,6 +283,9 @@ describe('useNodeDrag auto-pan', () => {
     testState.mutationFns.moveNode.mockReset()
     testState.mutationFns.batchMoveNodes.mockReset()
     testState.batchUpdateNodeBounds.mockReset()
+    testState.setTransientNodePositions.mockReset()
+    testState.commitTransientNodePositions.mockReset()
+    testState.discardTransientNodePositions.mockReset()
     testState.nodeSnap.shouldSnap.mockReset()
     testState.nodeSnap.shouldSnap.mockReturnValue(false)
     testState.nodeSnap.applySnapToPosition.mockReset()
@@ -278,17 +313,17 @@ describe('useNodeDrag auto-pan', () => {
     drag.handleDrag(pointerEvent(760, 300), '1')
     testState.requestAnimationFrameCallback?.(0)
 
-    expect(testState.mutationFns.batchMoveNodes).toHaveBeenLastCalledWith([
+    expect(testState.setTransientNodePositions).toHaveBeenLastCalledWith([
       { nodeId: '1', position: { x: 110, y: 200 } }
     ])
 
-    testState.mutationFns.batchMoveNodes.mockClear()
+    testState.setTransientNodePositions.mockClear()
 
     testState.mockDs.offset[0] -= 5
     testState.capturedOnPan.current!(5, 0)
     testState.requestAnimationFrameCallback?.(0)
 
-    expect(testState.mutationFns.batchMoveNodes).toHaveBeenCalledWith([
+    expect(testState.setTransientNodePositions).toHaveBeenCalledWith([
       { nodeId: '1', position: { x: 115, y: 200 } }
     ])
   })
@@ -298,14 +333,14 @@ describe('useNodeDrag auto-pan', () => {
     const drag = useNodeDrag()
 
     drag.startDrag(pointerEvent(750, 300), '1')
-    testState.mutationFns.batchMoveNodes.mockClear()
+    testState.setTransientNodePositions.mockClear()
 
     testState.mockDs.offset[0] -= 5
     testState.capturedOnPan.current!(5, 0)
     testState.requestAnimationFrameCallback?.(0)
 
-    expect(testState.mutationFns.batchMoveNodes).toHaveBeenCalledTimes(1)
-    const calls = testState.mutationFns.batchMoveNodes.mock.calls[0][0]
+    expect(testState.setTransientNodePositions).toHaveBeenCalledTimes(1)
+    const calls = testState.setTransientNodePositions.mock.calls[0][0]
     const nodeIds = calls.map((u: { nodeId: string }) => u.nodeId)
     expect(nodeIds).toContain('1')
     expect(nodeIds).toContain('2')
@@ -321,8 +356,8 @@ describe('useNodeDrag auto-pan', () => {
     testState.capturedOnPan.current!(5, 0)
     testState.requestAnimationFrameCallback?.(0)
 
-    expect(testState.mutationFns.batchMoveNodes).toHaveBeenCalledTimes(1)
-    expect(testState.mutationFns.batchMoveNodes).toHaveBeenCalledWith([
+    expect(testState.setTransientNodePositions).toHaveBeenCalledTimes(1)
+    expect(testState.setTransientNodePositions).toHaveBeenCalledWith([
       { nodeId: '1', position: { x: 115, y: 200 } }
     ])
   })

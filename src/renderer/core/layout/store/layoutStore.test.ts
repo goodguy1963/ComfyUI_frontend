@@ -94,6 +94,40 @@ describe('layoutStore CRDT operations', () => {
     expect(nodeRef.value?.position).toEqual(newPosition)
   })
 
+  it('previews transient node positions without adding Yjs operations', () => {
+    const nodeId = 'test-node-transient'
+    const layout = createTestNode(nodeId)
+
+    layoutStore.applyOperation({
+      type: 'createNode',
+      entity: 'node',
+      nodeId,
+      layout,
+      timestamp: Date.now(),
+      source: LayoutSource.External,
+      actor: 'test'
+    })
+
+    const operationCount = layoutStore.getOperationsSince(0).length
+    layoutStore.setTransientNodePositions([
+      { nodeId, position: { x: 320, y: 180 } }
+    ])
+
+    expect(layoutStore.getNodeLayoutRef(nodeId).value?.position).toEqual({
+      x: 320,
+      y: 180
+    })
+    expect(layoutStore.getOperationsSince(0)).toHaveLength(operationCount)
+
+    layoutStore.commitTransientNodePositions()
+
+    expect(layoutStore.getNodeLayoutRef(nodeId).value?.position).toEqual({
+      x: 320,
+      y: 180
+    })
+    expect(layoutStore.getOperationsSince(0)).toHaveLength(operationCount + 1)
+  })
+
   it('should resize nodes', () => {
     const nodeId = 'test-node-3'
     const layout = createTestNode(nodeId)

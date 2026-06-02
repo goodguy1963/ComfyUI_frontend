@@ -30,7 +30,7 @@ Date note: the local execution environment reported `2026-06-02`; the user reque
 | --- | --- | --- | --- |
 | R1 | Stabilize instrumentation and comparison reporting for `main`, `research-start`, and `research-final`. | Complete | Benchmark probe runs on all available states. |
 | R2 | Add drag/pan fast-path instrumentation for Yjs transaction and layout sync rates before changing behavior. | Complete | Unit tests, typecheck, browser API smoke. |
-| R3 | Implement interaction fast-path or transient layout buffering behind a feature flag. | Pending | Layout store tests, drag/resize tests, Replacer pan probe. |
+| R3 | Implement interaction fast-path or transient layout buffering for Vue node drag. | Complete | Layout store tests, drag tests, Replacer pan probe. |
 | R4 | Implement delta-based mounting or mount-set hysteresis behind a feature flag. | Pending | `viewportMountedNodes` tests, GraphCanvas tests, Replacer probe. |
 | R5 | Make slot geometry fully pan-free where safe. | Pending | Slot tracking tests, DOMRect attribution probe. |
 | R6 | Continue link/minimap phase separation only after profiling confirms the next hotspot. | Pending | CPU profile/probe comparison, minimap tests. |
@@ -131,3 +131,44 @@ Playwright caveat:
 
 - Running the full targeted Playwright test through repo global setup timed out after loading the Replacer workflow because the test environment tried to manage the live `ComfyUI/user` folder while the `8190` backend had `comfyui.db` locked.
 - Future full Playwright runs should use an isolated `TEST_COMFYUI_DIR`, not the live backend user directory.
+
+### R3 Transient Vue Node Drag Buffer
+
+Changes:
+
+- Added transient node layout overlays in `layoutStore`.
+- Vue node drag now updates transient positions during RAF-driven drag preview.
+- Yjs/layout operations are committed once on drag end through `commitTransientNodePositions()`.
+- Snap-on-release discards the transient preview and commits snapped bounds in one batch.
+
+Scope:
+
+- This targets Vue node dragging write amplification. It is not expected to fix canvas pan latency, because canvas pan does not move node layouts.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src/renderer/core/layout/store/layoutStore.test.ts src/renderer/extensions/vueNodes/layout/useNodeDrag.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `node output_sessions\replacer_input_latency_probe.cjs > output_sessions\r3-transient-node-drag-replacer-probe.json`
+
+Probe result:
+
+| Replacer probe after R3 | Value |
+| --- | ---: |
+| App ready | 5597 ms |
+| Workflow load | 22478 ms |
+| Total | 33173 ms |
+| Far mounted nodes | 0 |
+| Far pan | 47.6 ms |
+| Far wheel | 42.7 ms |
+| Middle mounted nodes | 66 |
+| Middle pan | 137.1 ms |
+| Middle wheel | 42.5 ms |
+| Close mounted nodes | 20 |
+| Close pan | 99.8 ms |
+| Close wheel | 67.4 ms |
+
+Interpretation:
+
+- Mounted node counts stayed stable.
+- Canvas pan latency remains unresolved and noisy; this task was a node-drag write-amplification cleanup.

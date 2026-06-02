@@ -133,6 +133,7 @@ class LayoutStoreImpl implements LayoutStore {
   // CustomRef cache and trigger functions
   private nodeRefs = new Map<NodeId, Ref<NodeLayout | null>>()
   private nodeTriggers = new Map<NodeId, () => void>()
+  private transientNodeLayouts = new Map<NodeId, NodeLayout>()
 
   // New data structures for hit testing
   private linkLayouts = new Map<LinkId, LinkLayout>()
@@ -244,6 +245,11 @@ class LayoutStoreImpl implements LayoutStore {
         return {
           get: () => {
             track()
+            const transientLayout = this.transientNodeLayouts.get(nodeId)
+            if (transientLayout) {
+              return transientLayout
+            }
+
             const ynode = this.ynodes.get(nodeId)
             const layout = ynode ? yNodeToLayout(ynode) : null
             return layout
@@ -334,6 +340,57 @@ class LayoutStoreImpl implements LayoutStore {
     }
 
     return nodeRef
+  }
+
+  setTransientNodePositions(
+    updates: Array<{ nodeId: NodeId; position: Point }>
+  ): void {
+    for (const { nodeId, position } of updates) {
+      const baseLayout =
+        this.transientNodeLayouts.get(nodeId) ??
+        (this.ynodes.get(nodeId)
+          ? yNodeToLayout(this.ynodes.get(nodeId)!)
+          : null)
+
+      if (!baseLayout) continue
+
+      this.transientNodeLayouts.set(nodeId, {
+        ...baseLayout,
+        position,
+        bounds: {
+          ...baseLayout.bounds,
+          x: position.x,
+          y: position.y
+        }
+      })
+
+      this.nodeTriggers.get(nodeId)?.()
+    }
+  }
+
+  commitTransientNodePositions(): void {
+    if (this.transientNodeLayouts.size === 0) return
+
+    const updates: NodeBoundsUpdate[] = Array.from(
+      this.transientNodeLayouts,
+      ([nodeId, layout]) => ({
+        nodeId,
+        bounds: layout.bounds
+      })
+    )
+
+    this.transientNodeLayouts.clear()
+    this.batchUpdateNodeBounds(updates)
+  }
+
+  discardTransientNodePositions(): void {
+    if (this.transientNodeLayouts.size === 0) return
+
+    const nodeIds = Array.from(this.transientNodeLayouts.keys())
+    this.transientNodeLayouts.clear()
+    for (const nodeId of nodeIds) {
+      this.nodeTriggers.get(nodeId)?.()
+    }
   }
 
   /**
@@ -1031,6 +1088,7 @@ class LayoutStoreImpl implements LayoutStore {
       this.linkSegmentLayouts.clear()
       this.slotLayouts.clear()
       this.rerouteLayouts.clear()
+      this.transientNodeLayouts.clear()
       this.pendingGlobalChanges = []
       this.isGlobalDispatchQueued = false
       this.pendingNodeChanges = []
