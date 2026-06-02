@@ -306,3 +306,27 @@ Interpretation:
 
 - This is a real CPU reduction, mainly in script time, without changing the frame p95 because the benchmark was already at the frame budget after the earlier link-drawing and slot-measurement fixes.
 - The next profile target is no longer minimap graph polling. The remaining app self-time is fragmented across normal canvas/Vue/layout work, with no single hotspot comparable to the minimap polling issue.
+
+## Minimap Data Lookup Cleanup
+
+After minimap polling was removed from the active pan window, `LayoutStoreDataSource.getNodes()` was still cleaned up because the CPU profile exposed an inefficient lookup pattern. The old code scanned `graph._nodes` with `Array.find()` once for every layout-store node. On large graphs this is O(n^2). The new code uses `graph.getNodeById()`, which is backed by LiteGraph's `_nodes_by_id` map.
+
+Replacer pan benchmark after the lookup cleanup, median of 3:
+
+| Replacer Vue pan | After minimap skip | After lookup cleanup |
+| --- | ---: | ---: |
+| Total duration | 5365.7 ms | 5446.8 ms |
+| Task duration | 3892.5 ms | 4033.1 ms |
+| Script duration | 382.5 ms | 410.3 ms |
+| Average frame | 16.8 ms | 16.9 ms |
+| P95 frame | 16.8 ms | 16.8 ms |
+| Layouts | 9 | 9 |
+| Total blocking time | 0 ms | 0 ms |
+| `getBoundingClientRect()` calls | 774 | 774 |
+| `drawConnections()` duration | 23.9 ms | 24.3 ms |
+| `computeVisibleNodes()` duration | 12.7 ms | 15.7 ms |
+
+Interpretation:
+
+- The lookup cleanup is a scalability fix for minimap data rebuilds, not a new pan-frame win after minimap polling is already skipped during active pan.
+- The Replacer pan remains at the frame budget. The small task/script differences are within local-run noise for this benchmark.

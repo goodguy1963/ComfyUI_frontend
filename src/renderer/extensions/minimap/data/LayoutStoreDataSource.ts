@@ -22,8 +22,7 @@ export class LayoutStoreDataSource extends AbstractMinimapDataSource {
     const nodes: MinimapNodeData[] = []
 
     for (const [nodeId, layout] of allNodes) {
-      // Find corresponding LiteGraph node for additional properties
-      const graphNode = this.graph?._nodes?.find((n) => String(n.id) === nodeId)
+      const graphNode = this.graph?.getNodeById?.(nodeId)
 
       const executionState = nodeProgressStates[nodeId]?.state ?? null
 
