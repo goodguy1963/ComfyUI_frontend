@@ -707,7 +707,11 @@ export class SubgraphNode extends LGraphNode implements BaseLGraph {
       if (!link) {
         console.warn(
           `[SubgraphNode.configure] No link found for link ID ${linkId}`,
-          this
+          {
+            nodeId: this.id,
+            title: this.title,
+            subgraphId: this.subgraph.id
+          }
         )
         continue
       }

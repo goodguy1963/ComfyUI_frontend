@@ -2,11 +2,13 @@
 import NodeBadge from '@/renderer/extensions/vueNodes/components/NodeBadge.vue'
 import type { NodeBadgeProps } from '@/renderer/extensions/vueNodes/components/NodeBadge.vue'
 
-defineProps<{
+withDefaults(defineProps<{
   hasComfyBadge: boolean
   core: NodeBadgeProps[]
   extension: NodeBadgeProps[]
-}>()
+}>(), {
+  hasComfyBadge: false
+})
 </script>
 <template>
   <div
