@@ -35,43 +35,299 @@ This matters because Vue DevTools and dev-only Vue plugins add measurable overhe
 
 ## Complete Change Inventory
 
-The branch contains one large initial optimization commit plus later targeted commits. This is the current list of performance-relevant work.
+The branch contains a large bundle of pre-GitHub work plus later targeted GitHub-era commits. This is important for reading the history: many changes were already made before the branch was pushed to the fork, and Git only records them here as the single large commit `4cd064f5b Optimize Vue node pan performance`.
 
-### 1. Initial Vue Pan Optimization Set
+The current performance-relevant branch history is:
+
+1. `4cd064f5b Optimize Vue node pan performance` - pre-GitHub optimization bundle.
+2. `b65298dd3 Skip minimap graph polling during canvas pan`.
+3. `00256eb27 Optimize minimap layout node lookup`.
+4. `3ddfc027e Handle malformed number widget values`.
+5. `fc8651a55 Accept boolean malformed number widget values`.
+6. `d8297e69c Reduce dev warning overhead for large workflows`.
+7. `1703b07aa Use low detail nodes at medium zoom`.
+8. `10bc36b40 Reduce Vue node viewport overscan`.
+9. `952f63e32 Merge remote-tracking branch 'origin/main' into perf/replacer-pan-optimizations`.
+10. `433494bbf Render far zoom nodes on canvas`.
+
+Documentation-only commits, including `bc2bcde0f` and `e0a22dd8f`, record benchmark results and report updates rather than changing runtime behavior.
+
+### 1. Pre-GitHub Optimization Bundle
 
 Commit: `4cd064f5b Optimize Vue node pan performance`
 
-Main areas changed:
+This was not one small change. It was the accumulated local optimization work before the GitHub branch/fork workflow started. It changed the benchmark harness, Vue node rendering, LiteGraph drawing, slot/layout measurement, graph lifecycle management, queue/output stores, and several correctness paths.
+
+#### 1.1 Benchmark Harness and Measurement Support
 
 - Added realistic Playwright performance coverage and helper support for loading the Replacer workflow from disk.
 - Added benchmark reports and slowdown analysis docs.
-- Added viewport-based Vue node mounting:
-  - `src/components/graph/GraphCanvas.vue`
-  - `src/components/graph/viewportMountedNodes.ts`
-  - `src/renderer/core/spatial/SpatialIndex.ts`
-- Added motion/detail-state handling for Vue nodes:
-  - `src/renderer/extensions/vueNodes/components/LGraphNode.vue`
-  - `src/renderer/core/layout/transform/TransformPane.vue`
-- Added a transform fallback/snapshot drawing helper:
-  - `src/renderer/core/layout/transform/panSnapshotCanvas.ts`
-- Reduced slot/layout measurement work:
-  - `src/renderer/extensions/vueNodes/composables/useSlotElementTracking.ts`
-  - `src/renderer/extensions/vueNodes/composables/useVueNodeResizeTracking.ts`
-  - `src/renderer/core/layout/sync/useLayoutSync.ts`
-  - `src/renderer/core/layout/store/layoutStore.ts`
-- Optimized LiteGraph link/slot drawing and graph cleanup:
-  - `src/lib/litegraph/src/LGraphCanvas.ts`
-  - `src/renderer/core/canvas/litegraph/slotCalculations.ts`
-  - `src/lib/litegraph/src/linkDeduplication.ts`
-  - `src/lib/litegraph/src/LGraph.ts`
-- Reduced reactive churn in graph/node lifecycle management:
-  - `src/composables/graph/useGraphNodeManager.ts`
-  - `src/composables/graph/useVueNodeLifecycle.ts`
-- Reduced store churn:
-  - `src/stores/queueStore.ts`
-  - `src/stores/nodeOutputStore.ts`
-  - `src/stores/executionStore.ts`
-  - `src/scripts/app.ts`
+
+Files:
+
+- `browser_tests/tests/performance.spec.ts`
+- `browser_tests/fixtures/ComfyPage.ts`
+- `browser_tests/fixtures/helpers/PerformanceHelper.ts`
+- `browser_tests/fixtures/helpers/WorkflowHelper.ts`
+- `browser_tests/fixtures/helpers/AppModeHelper.ts`
+- `browser_tests/fixtures/helpers/CanvasHelper.ts`
+- `browser_tests/fixtures/utils/perfReporter.ts`
+
+What this enabled:
+
+- Loading the real Replacer workflow instead of only synthetic/default workflows.
+- Measuring frame timing, p95 frame duration, task duration, layout count, DOM rect reads, pan-time DOM additions, draw duration, and other counters.
+- Comparing original, branch-before, and branch-after states.
+
+#### 1.2 Viewport-Based Vue Node Mounting
+
+Files:
+
+- `src/components/graph/GraphCanvas.vue`
+- `src/components/graph/viewportMountedNodes.ts`
+- `src/components/graph/viewportMountedNodes.test.ts`
+- `src/renderer/core/spatial/SpatialIndex.ts`
+- `src/renderer/core/spatial/SpatialIndex.test.ts`
+
+Change:
+
+- Rendered a filtered `mountedNodes` list instead of all Vue node data.
+- Used spatial-index queries, LiteGraph visible-node fallback data, and sticky nodes for focused/centered nodes.
+- Added spatial-index overflow handling for nodes outside default QuadTree bounds.
+
+Good:
+
+- Reduced DOM pressure for large workflows when many nodes are offscreen.
+- Kept important interaction targets mounted.
+
+Risk:
+
+- Frequent viewport filtering can add scripting work.
+- Mount/unmount churn can hurt pan if not controlled.
+
+#### 1.3 Motion Level of Detail and Transform Pane Changes
+
+Files:
+
+- `src/renderer/extensions/vueNodes/components/LGraphNode.vue`
+- `src/renderer/extensions/vueNodes/components/LGraphNode.test.ts`
+- `src/renderer/core/layout/transform/TransformPane.vue`
+- `src/renderer/core/layout/transform/TransformPane.test.ts`
+
+Change:
+
+- Added motion detail levels for Vue nodes.
+- Hid or skipped expensive internals during motion states.
+- Moved high-frequency transform style/class updates out of Vue template binding and into direct DOM mutation in `TransformPane`.
+- Added separate live/fallback panes.
+
+Good:
+
+- Reduced component work during active interaction.
+- Avoided diffing the full node subtree for every transform frame.
+
+Risk:
+
+- Some hidden content can still exist reactively.
+- Fallback pane complexity can add start/end interaction cost if enabled.
+
+#### 1.4 Snapshot Drawing Helper
+
+Files:
+
+- `src/renderer/core/layout/transform/panSnapshotCanvas.ts`
+- `src/renderer/core/layout/transform/panSnapshotCanvas.test.ts`
+
+Change:
+
+- Added a helper to draw simplified node snapshots on canvas.
+- Implemented node visibility planning, simplified rounded node drawing, title fitting, and camera delta transform helpers.
+
+Good:
+
+- This helper became useful later for the far-zoom canvas mode.
+
+Important note:
+
+- In the original pre-GitHub bundle this helper existed but was not yet the production far-zoom rendering path. The later `433494bbf` commit wires canvas drawing into production for far zoom.
+
+#### 1.5 Slot/Layout Measurement Deferral and Caching
+
+Files:
+
+- `src/renderer/extensions/vueNodes/composables/useSlotElementTracking.ts`
+- `src/renderer/extensions/vueNodes/composables/useSlotElementTracking.test.ts`
+- `src/renderer/extensions/vueNodes/composables/useVueNodeResizeTracking.ts`
+- `src/renderer/extensions/vueNodes/composables/useVueNodeResizeTracking.test.ts`
+- `src/renderer/core/layout/sync/useLayoutSync.ts`
+- `src/renderer/core/layout/sync/useLayoutSync.test.ts`
+- `src/renderer/core/layout/store/layoutStore.ts`
+- `src/renderer/core/layout/store/layoutStore.test.ts`
+
+Change:
+
+- Deferred dirty slot DOM measurement while pan was active.
+- Used cached slot offsets when possible.
+- Avoided all-node slot sync after pure pan; full sync is only needed after scale-changing interactions.
+- Avoided layout-store writes when positions did not change.
+
+Measured effect in earlier Replacer runs:
+
+- Slot rect reads dropped from about `90` to `2`.
+- Node rect reads from slot sync dropped from about `29` to `1`.
+- Total `getBoundingClientRect()` calls dropped after this and the pointer cache work.
+
+Risk:
+
+- Cached slot offsets require correct invalidation after widget visibility, collapse/expand, resize, and extension-rendered content changes.
+
+#### 1.6 LiteGraph Link Drawing, Slot Calculations, and Link Cleanup
+
+Files:
+
+- `src/lib/litegraph/src/LGraphCanvas.ts`
+- `src/lib/litegraph/src/LGraphCanvas.centerOnNode.test.ts`
+- `src/lib/litegraph/src/LGraph.ts`
+- `src/lib/litegraph/src/LGraph.test.ts`
+- `src/lib/litegraph/src/linkDeduplication.ts`
+- `src/renderer/core/canvas/litegraph/slotCalculations.ts`
+- `src/utils/migration/migrateReroute.ts`
+- `src/utils/migration/migrateReroute.test.ts`
+- `src/extensions/core/rerouteNode.ts`
+- `src/extensions/core/rerouteNode.test.ts`
+
+Change:
+
+- Reduced slot-position allocation and repeated slot-position calculation.
+- Added per-frame slot position caching during connection drawing.
+- Skipped normal LiteGraph link drawing during active low-detail Vue pan at the low zoom floor, then restored redraw after pan release.
+- Added invalid/duplicate link cleanup paths for malformed workflows.
+
+Measured effect:
+
+- Earlier attribution showed `drawConnections()` duration dropping from about `795.4ms` to `27.4ms` in the Replacer pan window.
+- Repeated three-way runs showed `drawConnections()` median duration around `579.5ms` on original and `20-25ms` on the branch.
+
+Risk:
+
+- Any visible-node or link-cleanup optimization must preserve correctness for moved/resized nodes, reroutes, subgraphs, and unusual extension-generated links.
+
+#### 1.7 Pointer Rect Cache
+
+Files:
+
+- `src/lib/litegraph/src/LGraphCanvas.ts`
+- related canvas event tests.
+
+Change:
+
+- Cached `canvas.getBoundingClientRect()` for the duration of a pointer drag.
+- Reused the cached rect in `adjustMouseEvent()` during drag.
+- Cleared the cache on pointer up/out/cancel.
+
+Measured effect:
+
+- `adjustMouseEvent()` move rect reads dropped from `60` to `0`.
+- Total rect reads dropped from about `835` to `774` in repeated Replacer runs.
+
+Assessment:
+
+- This was a targeted cleanup, not a large standalone frame-time win.
+
+#### 1.8 Graph Node Manager and Vue Node Lifecycle
+
+Files:
+
+- `src/composables/graph/useGraphNodeManager.ts`
+- `src/composables/graph/useGraphNodeManager.test.ts`
+- `src/composables/graph/useVueNodeLifecycle.ts`
+- `src/composables/graph/useVueNodeLifecycle.test.ts`
+
+Change:
+
+- Preserved `VueNodeData` object identity instead of replacing map entries aggressively.
+- Preserved reactive arrays for widgets, inputs, and outputs where possible.
+- Cached node manager state per graph/workflow.
+- Added cleanup paths for slot layouts and slot registry data.
+
+Good:
+
+- Reduced reactive invalidation and rebuild work.
+
+Risk:
+
+- Mutating LiteGraph node property descriptors is invasive and needs regression coverage with custom nodes/extensions.
+
+#### 1.9 Store Churn and Output/Queue Updates
+
+Files:
+
+- `src/stores/queueStore.ts`
+- `src/stores/queueStore.test.ts`
+- `src/stores/nodeOutputStore.ts`
+- `src/stores/nodeOutputStore.test.ts`
+- `src/stores/executionStore.ts`
+- `src/stores/executionStore.test.ts`
+- `src/scripts/app.ts`
+- `src/scripts/app.test.ts`
+- `src/services/customerEventsService.ts`
+
+Change:
+
+- Reconciled queue tasks to preserve object identity.
+- Cached image URL construction by stable output/image references.
+- Suppressed stale execution progress visuals after workflow switches.
+- Added guards around pathological canvas backing-store sizes.
+
+Good:
+
+- Reduces unnecessary component churn outside direct pan/zoom.
+
+Risk:
+
+- Some equality checks and cache behavior depend on stable object/reference patterns.
+
+#### 1.10 Subgraph and Promoted Widget Corrections
+
+Files:
+
+- `src/core/graph/subgraph/promotedWidgetView.ts`
+- `src/core/graph/subgraph/promotedWidgetView.test.ts`
+- `src/core/graph/subgraph/promotionUtils.ts`
+- `src/core/graph/subgraph/promotionUtils.test.ts`
+- `src/lib/litegraph/src/subgraph/PromotedWidgetViewManager.ts`
+- `src/lib/litegraph/src/subgraph/SubgraphNode.ts`
+- `src/lib/litegraph/src/subgraph/SubgraphNode.test.ts`
+- `browser_tests/tests/subgraph/subgraphNavigation.spec.ts`
+
+Change:
+
+- Updated promoted-widget/subgraph handling as part of making large malformed/subgraph-heavy workflows load and render more predictably.
+
+Assessment:
+
+- This is partly performance-adjacent and partly correctness. It helped make the realistic Replacer workflow benchmarkable, but it is also a correctness risk area because subgraph behavior is complex.
+
+#### 1.11 Smaller Interaction and UI Rendering Changes
+
+Files:
+
+- `src/renderer/extensions/vueNodes/execution/useNodeExecutionState.ts`
+- `src/renderer/extensions/vueNodes/interactions/resize/useNodeResize.ts`
+- `src/renderer/extensions/vueNodes/interactions/resize/useNodeResize.test.ts`
+- `src/renderer/extensions/vueNodes/layout/useNodeDrag.ts`
+- `src/renderer/extensions/vueNodes/layout/useNodeDrag.test.ts`
+- `src/composables/node/useNodePricing.ts`
+- `src/composables/node/useNodePricing.test.ts`
+- `src/platform/telemetry/providers/cloud/GtmTelemetryProvider.test.ts`
+
+Change:
+
+- Reduced unnecessary execution/resize/drag/pricing/telemetry-related updates that could interact with node rendering or test stability.
+
+Assessment:
+
+- These are smaller supporting changes. They are not the primary performance wins, but they reduce noise and edge-case churn.
 
 What worked well:
 
