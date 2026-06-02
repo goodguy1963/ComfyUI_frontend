@@ -17,6 +17,7 @@ import { app } from '@/scripts/app'
 
 const mockData = vi.hoisted(() => ({
   mockExecuting: false,
+  mockCamera: { z: 1 },
   mockLatestPreviewUrl: '',
   mockLgraphNode: null as Record<string, unknown> | null,
   mockShouldShowPreviewImg: false
@@ -38,7 +39,7 @@ vi.mock('@/renderer/core/layout/transform/useTransformState', () => {
     useTransformState: () => ({
       screenToCanvas: vi.fn(),
       canvasToScreen: vi.fn(),
-      camera: { z: 1 },
+      camera: mockData.mockCamera,
       isNodeInViewport: vi.fn()
     })
   }
@@ -249,6 +250,7 @@ describe('LGraphNode', () => {
   beforeEach(() => {
     vi.resetAllMocks()
     mockData.mockExecuting = false
+    mockData.mockCamera.z = 1
     mockData.mockLatestPreviewUrl = ''
     mockData.mockShouldShowPreviewImg = false
 
@@ -499,6 +501,33 @@ describe('LGraphNode', () => {
     expect(badges).toBeInTheDocument()
     expect(footer).toBeInTheDocument()
     expect(resizeHandle).not.toBeNull()
+  })
+
+  it('keeps a cheap readable title in low detail mode', () => {
+    mockData.mockCamera.z = 0.25
+
+    renderLGraphNode(
+      {
+        nodeData: {
+          ...mockNodeData,
+          color: '#000000',
+          widgets: [{ name: 'strength', type: 'number' }]
+        }
+      },
+      {
+        stubs: {
+          NodeHeader: nodeHeaderStub,
+          NodeSlots: nodeSlotsStub,
+          NodeWidgets: nodeWidgetsStub
+        }
+      }
+    )
+
+    expect(screen.getByTestId('node-low-detail-header')).toHaveTextContent(
+      'Test Node'
+    )
+    expect(screen.queryByTestId('node-header-stub')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('node-widgets-stub')).not.toBeInTheDocument()
   })
 
   it('should initialize height CSS vars for collapsed nodes', () => {

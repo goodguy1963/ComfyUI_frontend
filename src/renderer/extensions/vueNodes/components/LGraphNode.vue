@@ -119,6 +119,17 @@
           @update:title="handleHeaderTitleUpdate"
         />
       </div>
+      <div
+        v-else-if="displayHeader && lowDetail"
+        data-testid="node-low-detail-header"
+        class="flex h-7 min-w-0 items-center overflow-hidden px-2 text-xs font-medium text-white/95"
+        :class="bodyRoundingClass"
+        :style="{ backgroundColor: lowDetailHeaderColor }"
+      >
+        <span class="block min-w-0 truncate">
+          {{ nodeData.title }}
+        </span>
+      </div>
 
       <div
         v-if="isCollapsed && executing && progress !== undefined"
@@ -668,6 +679,10 @@ const isTransparentHeaderless = computed(
     !displayHeader.value &&
     !!nodeData.bgcolor &&
     isTransparent(nodeData.bgcolor)
+)
+
+const lowDetailHeaderColor = computed(
+  () => applyLightThemeColor(nodeData?.color) || 'var(--color-slate-700)'
 )
 
 const canRenderResizeHandles = computed(

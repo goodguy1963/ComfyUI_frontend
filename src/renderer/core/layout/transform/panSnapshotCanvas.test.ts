@@ -35,9 +35,56 @@ describe('panSnapshotCanvas', () => {
       width: 120,
       height: 80,
       headerFill: '#112233',
-      bodyFill: '#334455'
+      bodyFill: '#334455',
+      showTitle: true
     })
-    expect(node.titleHeight).toBeGreaterThanOrEqual(16)
+    expect(node.titleHeight).toBeLessThanOrEqual(22)
+  })
+
+  it('hides titles and keeps compact headers at very far zoom', () => {
+    const camera: PanSnapshotCamera = { x: 0, y: 0, z: 0.1 }
+    const nodes: PanSnapshotNode[] = [
+      {
+        id: 'large',
+        title: 'Very Large Node Title',
+        x: 10,
+        y: 10,
+        width: 1200,
+        height: 500
+      }
+    ]
+
+    const [node] = buildPanSnapshotPlan(nodes, camera, {
+      width: 1280,
+      height: 720
+    })
+
+    expect(node.showTitle).toBe(false)
+    expect(node.titleHeight).toBeLessThanOrEqual(7)
+  })
+
+  it('falls back from black or transparent snapshot fills', () => {
+    const camera: PanSnapshotCamera = { x: 0, y: 0, z: 0.5 }
+    const nodes: PanSnapshotNode[] = [
+      {
+        id: 'dark',
+        title: 'Dark',
+        x: 10,
+        y: 10,
+        width: 240,
+        height: 160,
+        color: '#000000',
+        bgcolor: 'transparent'
+      }
+    ]
+
+    const [node] = buildPanSnapshotPlan(nodes, camera, {
+      width: 1280,
+      height: 720
+    })
+
+    expect(node.headerFill).toBe('#334155')
+    expect(node.bodyFill).toBe('#1f2937')
   })
 
   it('drops nodes that are too small or fully offscreen', () => {

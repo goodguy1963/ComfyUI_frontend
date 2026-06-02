@@ -1,3 +1,5 @@
+import { isTransparent, parseToRgb } from '@/utils/colorUtil'
+
 export interface PanSnapshotCamera {
   x: number
   y: number
@@ -37,6 +39,8 @@ export interface PanSnapshotDrawNode {
   bodyFill: string
   stroke: string
   titleColor: string
+  showTitle: boolean
+  titleFontSize: number
 }
 
 export interface PanSnapshotDeltaTransform {
@@ -53,6 +57,9 @@ const DEFAULT_STROKE = 'rgba(148, 163, 184, 0.45)'
 const DEFAULT_ERROR_STROKE = 'rgba(248, 113, 113, 0.85)'
 const DEFAULT_ACTIVE_STROKE = 'rgba(96, 165, 250, 0.9)'
 const DEFAULT_TITLE_COLOR = 'rgba(248, 250, 252, 0.96)'
+const MIN_TITLE_SCALE = 0.14
+const MIN_TITLE_WIDTH_PX = 90
+const MIN_TITLE_HEIGHT_PX = 34
 
 function isNodeVisibleInViewport(
   x: number,
@@ -71,6 +78,22 @@ function isNodeVisibleInViewport(
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
+}
+
+function colorLuminance(color: string): number {
+  const { r, g, b } = parseToRgb(color)
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+}
+
+function readableSnapshotFill(
+  color: string | undefined,
+  fallback: string
+): string {
+  if (!color || isTransparent(color)) {
+    return fallback
+  }
+
+  return colorLuminance(color) < 0.07 ? fallback : color
 }
 
 function buildStroke(node: PanSnapshotNode): string {
@@ -164,9 +187,13 @@ export function buildPanSnapshotPlan(
       return []
     }
 
-    const titleHeight = node.collapsed
-      ? clamp(height, 12, 26)
-      : clamp(height * 0.24, 16, 30)
+    const showTitle =
+      camera.z >= MIN_TITLE_SCALE &&
+      width >= MIN_TITLE_WIDTH_PX &&
+      height >= MIN_TITLE_HEIGHT_PX
+    const titleHeight = showTitle
+      ? clamp(height * (node.collapsed ? 0.42 : 0.22), 10, 22)
+      : clamp(height * 0.12, 3, 7)
 
     return [
       {
@@ -178,10 +205,15 @@ export function buildPanSnapshotPlan(
         height,
         radius: clamp(Math.min(width, height) * 0.08, 4, 14),
         titleHeight,
-        headerFill: node.color ?? DEFAULT_HEADER_FILL,
-        bodyFill: node.bgcolor ?? node.color ?? DEFAULT_BODY_FILL,
+        headerFill: readableSnapshotFill(node.color, DEFAULT_HEADER_FILL),
+        bodyFill: readableSnapshotFill(
+          node.bgcolor ?? node.color,
+          DEFAULT_BODY_FILL
+        ),
         stroke: buildStroke(node),
-        titleColor: DEFAULT_TITLE_COLOR
+        titleColor: DEFAULT_TITLE_COLOR,
+        showTitle,
+        titleFontSize: clamp(titleHeight * 0.46, 9, 13)
       }
     ]
   })
@@ -248,9 +280,9 @@ export function drawPanSnapshot(
     ctx.strokeStyle = node.stroke
     ctx.stroke()
 
-    if (node.width >= 64) {
+    if (node.showTitle) {
       ctx.fillStyle = node.titleColor
-      ctx.font = `${clamp(node.titleHeight * 0.46, 10, 14)}px sans-serif`
+      ctx.font = `${node.titleFontSize}px sans-serif`
       ctx.fillText(
         fitSnapshotTitle(ctx, node.title, node.width - 20),
         node.x + 10,
