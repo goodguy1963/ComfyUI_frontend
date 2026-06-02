@@ -147,6 +147,7 @@ import GraphCanvasMenu from '@/components/graph/GraphCanvasMenu.vue'
 import {
   getHysteresisMountedNodeIds,
   getViewportNodeIdsWithLiteGraphFallback,
+  getVelocityAwareViewportOverscan,
   getVueNodeViewportBounds,
   updateMountedVueNodeRegistry,
   VUE_NODE_VIEWPORT_EXIT_OVERSCAN,
@@ -308,6 +309,21 @@ const shouldRenderFarZoomNodeCanvas = computed(
 const shouldMountVueNodeDom = computed(
   () => shouldRenderVueNodes.value && !shouldRenderFarZoomNodeCanvas.value
 )
+const viewportPanVelocity = ref(0)
+const enterViewportOverscan = computed(() =>
+  getVelocityAwareViewportOverscan(
+    VUE_NODE_VIEWPORT_OVERSCAN,
+    viewportPanVelocity.value
+  )
+)
+let previousViewportTransformSample:
+  | {
+      offsetX: number
+      offsetY: number
+      scale: number
+      sampledAt: number
+    }
+  | null = null
 
 // Vue node system
 const vueNodeLifecycle = useVueNodeLifecycle()
@@ -446,13 +462,11 @@ const viewportNodeIds = computed((): string[] | null => {
   const height = viewportHeight.value
   if (!width || !height) return null
 
-  const viewportBounds = getViewportBounds(
-    { width, height },
-    VUE_NODE_VIEWPORT_OVERSCAN
-  )
+  const overscan = enterViewportOverscan.value
+  const viewportBounds = getViewportBounds({ width, height }, overscan)
   const { spatialQueryBounds, fallbackBounds } = getVueNodeViewportBounds(
     viewportBounds,
-    getLiteGraphVisibleBounds(VUE_NODE_VIEWPORT_OVERSCAN)
+    getLiteGraphVisibleBounds(overscan)
   )
 
   return getViewportNodeIdsWithLiteGraphFallback(
@@ -925,6 +939,35 @@ onUnmounted(() => {
 
 useRafFn(() => {
   const canvas = comfyApp.canvas
+  if (canvas?.ds) {
+    const now = performance.now()
+    const [offsetX, offsetY] = canvas.ds.offset
+    const scale = canvas.ds.scale
+    const previous = previousViewportTransformSample
+
+    if (previous && now > previous.sampledAt) {
+      const dt = now - previous.sampledAt
+      const offsetDistance = Math.hypot(
+        offsetX - previous.offsetX,
+        offsetY - previous.offsetY
+      )
+      const scaleDistance = Math.abs(scale - previous.scale) * 2000
+      const nextVelocity = (offsetDistance + scaleDistance) / dt
+      const decayedVelocity = viewportPanVelocity.value * 0.85
+      viewportPanVelocity.value = Math.max(nextVelocity, decayedVelocity)
+    }
+
+    previousViewportTransformSample = {
+      offsetX,
+      offsetY,
+      scale,
+      sampledAt: now
+    }
+  } else {
+    previousViewportTransformSample = null
+    viewportPanVelocity.value = 0
+  }
+
   const middleCanvasPanActive =
     !!canvas?.dragging_canvas &&
     canvas.pointer.isDown &&

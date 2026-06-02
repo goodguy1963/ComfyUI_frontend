@@ -3,6 +3,8 @@ import type { Bounds } from '@/renderer/core/layout/types'
 
 export const VUE_NODE_VIEWPORT_OVERSCAN = 0.08
 export const VUE_NODE_VIEWPORT_EXIT_OVERSCAN = 0.18
+export const VUE_NODE_VIEWPORT_FAST_PAN_OVERSCAN = 0.16
+export const VUE_NODE_VIEWPORT_MAX_OVERSCAN_VELOCITY = 6
 
 export type ViewportNodeBoundsProvider = (nodeId: string) => Bounds | null
 
@@ -67,6 +69,22 @@ export function getVueNodeViewportBounds(
     spatialQueryBounds: liteGraphVisibleBounds ?? viewportBounds,
     fallbackBounds: viewportBounds
   }
+}
+
+export function getVelocityAwareViewportOverscan(
+  baseOverscan: number,
+  viewportVelocity: number,
+  maxOverscan = VUE_NODE_VIEWPORT_FAST_PAN_OVERSCAN,
+  maxVelocity = VUE_NODE_VIEWPORT_MAX_OVERSCAN_VELOCITY
+): number {
+  if (!Number.isFinite(viewportVelocity) || viewportVelocity <= 0) {
+    return baseOverscan
+  }
+
+  if (maxVelocity <= 0) return maxOverscan
+
+  const ratio = Math.min(1, viewportVelocity / maxVelocity)
+  return baseOverscan + (maxOverscan - baseOverscan) * ratio
 }
 
 export function getOrderedMountedVueNodes(

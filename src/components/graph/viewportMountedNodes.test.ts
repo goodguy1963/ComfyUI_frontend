@@ -7,6 +7,7 @@ import {
   getOrderedMountedVueNodes,
   getViewportNodeIdsWithLiteGraphFallback,
   getVueNodeViewportBounds,
+  getVelocityAwareViewportOverscan,
   updateMountedVueNodeRegistry
 } from './viewportMountedNodes'
 
@@ -117,6 +118,23 @@ describe('getVueNodeViewportBounds', () => {
       spatialQueryBounds: viewportBounds,
       fallbackBounds: viewportBounds
     })
+  })
+})
+
+describe('getVelocityAwareViewportOverscan', () => {
+  it('keeps the base overscan when velocity is zero or invalid', () => {
+    expect(getVelocityAwareViewportOverscan(0.08, 0)).toBe(0.08)
+    expect(getVelocityAwareViewportOverscan(0.08, Number.NaN)).toBe(0.08)
+  })
+
+  it('interpolates between base and max overscan from velocity', () => {
+    expect(getVelocityAwareViewportOverscan(0.08, 3, 0.16, 6)).toBeCloseTo(
+      0.12
+    )
+  })
+
+  it('caps overscan at the configured max', () => {
+    expect(getVelocityAwareViewportOverscan(0.08, 12, 0.16, 6)).toBe(0.16)
   })
 })
 

@@ -48,7 +48,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D3 | Extend transient layout buffering from Vue node drag to resize where safe. | Complete: already satisfied | Resize preview is DOM-only and commits layout once. |
 | D4 | Add DOMRect attribution after R5 to prove remaining slot/layout reads. | Complete | Added standalone attribution probe; remaining reads are low and mostly not slot-cache misses. |
 | D5 | Implement true delta-mounted node registry instead of computed list rebuild. | Complete | Replaced computed side-effect rebuild with stable shallow registry and watcher-driven deltas. |
-| D6 | Add velocity-aware viewport overscan/hysteresis tuning. | Pending | Should reduce edge pop-in without overmounting. |
+| D6 | Add velocity-aware viewport overscan/hysteresis tuning. | Complete | Enter overscan now expands with canvas transform velocity and keeps exit overscan stable. |
 | D7 | Rewrite `useGraphNodeManager` hot load path toward patch/incremental extraction. | Pending | Large startup/load candidate. |
 | D8 | Make `useLayoutSync` dirty/flush behavior more granular. | Pending | Use R2 counters to guide this. |
 | D9 | Profile and implement next confirmed link drawing optimization. | Pending | No speculative link work without a profile. |
@@ -531,3 +531,56 @@ Interpretation:
 - Startup/load improved in this sample, likely because the mounted registry no longer over-retains as many nodes during initialization and viewport transitions.
 - Far and middle pan are worse in this single sample, while wheel and close pan improved. Treat the action-to-paint numbers as noisy until repeated samples are collected.
 - The middle mounted count dropped from `76` to `66`. That is expected for this implementation because the previous computed side effects could over-retain mounted IDs; the hysteresis behavior still applies during viewport transitions.
+
+### D6 Velocity-Aware Viewport Overscan
+
+Changes:
+
+- Added `getVelocityAwareViewportOverscan()` in `viewportMountedNodes.ts`.
+- `GraphCanvas.vue` now samples canvas transform velocity during RAF.
+- The Vue-node enter overscan grows from `0.08` toward `0.16` during fast pan/zoom movement.
+- The exit overscan remains `0.18`, so this tunes edge pop-in without widening the retained-node exit window.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src\components\graph\viewportMountedNodes.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; $env:REPLACER_WORKFLOW_PATH='F:\ComfyUI_DEV_windows_portable_nvidia\ComfyUI_DEV_windows_portable\ComfyUI\user.bak\default\workflows\replacer creative i2v stable Parted 2.8_dev.json'; node output_sessions\replacer_input_latency_probe.cjs > output_sessions\d6-velocity-overscan-replacer-probe-valid.json`
+
+Replacer probe comparison against D5:
+
+| Metric | D5 before | D6 after |
+| --- | ---: | ---: |
+| App ready | 4160 | 3804 |
+| Workflow load | 8270 | 5018 |
+| Probe total | 16688 | 12839 |
+| Far mounted nodes | 0 | 0 |
+| Far pan | 64.6 | 52.5 |
+| Far wheel | 30.8 | 28.3 |
+| Middle mounted nodes | 66 | 73 |
+| Middle pan | 63.0 | 61.6 |
+| Middle wheel | 36.6 | 38.4 |
+| Close mounted nodes | 29 | 29 |
+| Close pan | 46.3 | 30.9 |
+| Close wheel | 39.2 | 45.2 |
+
+Mounted count details:
+
+| Scenario | Before action | After action |
+| --- | ---: | ---: |
+| Far | 0 | 0 |
+| Middle | 73 | 69 |
+| Close | 29 | 23 |
+
+Workflow file note:
+
+- Two D6 probe attempts were invalid because the default Replacer workflow file had become an empty 244-byte graph with `0` nodes.
+- Valid Replacer copies were found at `ComfyUI\user.bak\default\workflows\...` and `ComfyUI\user\default\workflows\... (2).json`.
+- The default workflow file was restored from the valid `(2)` copy and verified at `291` nodes / `287` links.
+- A follow-up load-timeline run with the restored default path reached the Replacer render surface at `7055 ms` and settled at `12171 ms`.
+
+Interpretation:
+
+- The velocity-aware enter window increases middle mounted nodes from `66` to `73` in this sample, which is the expected tradeoff for reducing edge pop-in while moving.
+- Close pan improved materially in this sample; middle pan changed only slightly.
+- Close wheel worsened in this single run. Treat wheel/pan latency as noisy until repeated sampling is added.
