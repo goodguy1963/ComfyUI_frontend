@@ -31,7 +31,7 @@ Date note: the local execution environment reported `2026-06-02`; the user reque
 | R1 | Stabilize instrumentation and comparison reporting for `main`, `research-start`, and `research-final`. | Complete | Benchmark probe runs on all available states. |
 | R2 | Add drag/pan fast-path instrumentation for Yjs transaction and layout sync rates before changing behavior. | Complete | Unit tests, typecheck, browser API smoke. |
 | R3 | Implement interaction fast-path or transient layout buffering for Vue node drag. | Complete | Layout store tests, drag tests, Replacer pan probe. |
-| R4 | Implement delta-based mounting or mount-set hysteresis behind a feature flag. | Pending | `viewportMountedNodes` tests, GraphCanvas tests, Replacer probe. |
+| R4 | Implement viewport mount-set hysteresis. | Complete | `viewportMountedNodes` tests, typecheck, Replacer probe. |
 | R5 | Make slot geometry fully pan-free where safe. | Pending | Slot tracking tests, DOMRect attribution probe. |
 | R6 | Continue link/minimap phase separation only after profiling confirms the next hotspot. | Pending | CPU profile/probe comparison, minimap tests. |
 | R7 | Investigate startup/workflow-load regression against `main`. | Pending | App-ready/workflow-load probe, focused startup instrumentation. |
@@ -172,3 +172,41 @@ Interpretation:
 
 - Mounted node counts stayed stable.
 - Canvas pan latency remains unresolved and noisy; this task was a node-drag write-amplification cleanup.
+
+### R4 Viewport Mount Hysteresis
+
+Changes:
+
+- Added an exit overscan window for Vue node mounting.
+- Nodes enter with the current tight overscan, but previously mounted nodes remain mounted until they leave the larger exit window.
+- Focused/centered sticky nodes are still forced mounted.
+- Far-zoom canvas mode still clears Vue node DOM completely.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src/components/graph/viewportMountedNodes.test.ts src/components/graph/GraphCanvas.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `node output_sessions\replacer_input_latency_probe.cjs > output_sessions\r4-viewport-hysteresis-replacer-probe.json`
+
+Probe result:
+
+| Replacer probe after R4 | Value |
+| --- | ---: |
+| App ready | 6658 ms |
+| Workflow load | 19533 ms |
+| Total | 30280 ms |
+| Far mounted nodes | 0 |
+| Far pan | 57.3 ms |
+| Far wheel | 34.6 ms |
+| Middle mounted nodes | 76 |
+| Middle pan | 36.2 ms |
+| Middle wheel | 45.6 ms |
+| Close mounted nodes | 29 |
+| Close pan | 29.9 ms |
+| Close wheel | 49.1 ms |
+
+Interpretation:
+
+- Hysteresis intentionally retains more mounted nodes at middle/close zoom (`66 -> 76`, `20 -> 29` in this local sequence).
+- The single-sample pan result improved strongly at middle/close zoom, likely because fewer mount/unmount edges occur during movement.
+- This needs repeated samples before claiming a stable win.

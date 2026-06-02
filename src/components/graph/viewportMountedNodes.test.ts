@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { VueNodeData } from '@/composables/graph/useGraphNodeManager'
 
 import {
+  getHysteresisMountedNodeIds,
   getOrderedMountedVueNodes,
   getViewportNodeIdsWithLiteGraphFallback,
   getVueNodeViewportBounds
@@ -115,5 +116,26 @@ describe('getVueNodeViewportBounds', () => {
       spatialQueryBounds: viewportBounds,
       fallbackBounds: viewportBounds
     })
+  })
+})
+
+describe('getHysteresisMountedNodeIds', () => {
+  it('keeps previous nodes mounted while they remain inside the exit window', () => {
+    expect(
+      getHysteresisMountedNodeIds(['a', 'b'], ['c'], ['b', 'c'])
+    ).toEqual(['c', 'b'])
+  })
+
+  it('drops previous nodes after they leave the exit window', () => {
+    expect(getHysteresisMountedNodeIds(['a', 'b'], ['c'], ['c'])).toEqual([
+      'c'
+    ])
+  })
+
+  it('always keeps sticky nodes mounted', () => {
+    expect(getHysteresisMountedNodeIds([], ['a'], ['a'], ['focused'])).toEqual([
+      'a',
+      'focused'
+    ])
   })
 })

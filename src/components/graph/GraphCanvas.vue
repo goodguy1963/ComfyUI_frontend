@@ -144,9 +144,11 @@ import DomWidgets from '@/components/graph/DomWidgets.vue'
 import FarZoomNodeCanvas from '@/components/graph/FarZoomNodeCanvas.vue'
 import GraphCanvasMenu from '@/components/graph/GraphCanvasMenu.vue'
 import {
+  getHysteresisMountedNodeIds,
   getOrderedMountedVueNodes,
   getViewportNodeIdsWithLiteGraphFallback,
   getVueNodeViewportBounds,
+  VUE_NODE_VIEWPORT_EXIT_OVERSCAN,
   VUE_NODE_VIEWPORT_OVERSCAN
 } from '@/components/graph/viewportMountedNodes'
 import LinkOverlayCanvas from '@/components/graph/LinkOverlayCanvas.vue'
@@ -354,6 +356,7 @@ const allNodes = computed((): VueNodeData[] =>
 )
 const focusedVueNodeId = ref<string | null>(null)
 const centeredVueNodeId = ref<string | null>(null)
+const previousMountedVueNodeIds = ref<string[]>([])
 
 const updateFocusedVueNodeId = () => {
   const activeNode = document.activeElement?.closest<HTMLElement>('[data-node-id]')
@@ -416,6 +419,32 @@ const viewportNodeIds = computed((): string[] | null => {
   )
 })
 
+const exitViewportNodeIds = computed((): string[] | null => {
+  const previousNodeIds = previousMountedVueNodeIds.value
+  if (!previousNodeIds.length) return []
+
+  const width = viewportWidth.value
+  const height = viewportHeight.value
+  if (!width || !height) return null
+
+  const viewportBounds = getViewportBounds(
+    { width, height },
+    VUE_NODE_VIEWPORT_EXIT_OVERSCAN
+  )
+  const { spatialQueryBounds, fallbackBounds } = getVueNodeViewportBounds(
+    viewportBounds,
+    getLiteGraphVisibleBounds(VUE_NODE_VIEWPORT_EXIT_OVERSCAN)
+  )
+
+  return getViewportNodeIdsWithLiteGraphFallback(
+    allNodes.value,
+    layoutStore.queryNodesInBounds(spatialQueryBounds).map(String),
+    fallbackBounds,
+    getLiteGraphNodeBounds,
+    previousNodeIds
+  )
+})
+
 const stickyVueNodeIds = computed(() => {
   const stickyNodeIds: string[] = []
 
@@ -445,18 +474,31 @@ watch(
 )
 
 const mountedNodes = computed((): VueNodeData[] => {
-  if (shouldRenderFarZoomNodeCanvas.value) return []
+  if (shouldRenderFarZoomNodeCanvas.value) {
+    previousMountedVueNodeIds.value = []
+    return []
+  }
 
   const orderedNodes = allNodes.value
   if (!orderedNodes.length) return orderedNodes
 
   const visibleNodeIds = viewportNodeIds.value
-  if (!visibleNodeIds) return orderedNodes
+  if (!visibleNodeIds) {
+    previousMountedVueNodeIds.value = orderedNodes.map((node) => node.id)
+    return orderedNodes
+  }
+
+  const mountedNodeIds = getHysteresisMountedNodeIds(
+    previousMountedVueNodeIds.value,
+    visibleNodeIds,
+    exitViewportNodeIds.value ?? visibleNodeIds,
+    stickyVueNodeIds.value
+  )
+  previousMountedVueNodeIds.value = mountedNodeIds
 
   return getOrderedMountedVueNodes(
     orderedNodes,
-    visibleNodeIds,
-    stickyVueNodeIds.value
+    mountedNodeIds
   )
 })
 
