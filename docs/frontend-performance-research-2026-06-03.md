@@ -49,7 +49,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D4 | Add DOMRect attribution after R5 to prove remaining slot/layout reads. | Complete | Added standalone attribution probe; remaining reads are low and mostly not slot-cache misses. |
 | D5 | Implement true delta-mounted node registry instead of computed list rebuild. | Complete | Replaced computed side-effect rebuild with stable shallow registry and watcher-driven deltas. |
 | D6 | Add velocity-aware viewport overscan/hysteresis tuning. | Complete | Enter overscan now expands with canvas transform velocity and keeps exit overscan stable. |
-| D7 | Rewrite `useGraphNodeManager` hot load path toward patch/incremental extraction. | Pending | Large startup/load candidate. |
+| D7 | Rewrite `useGraphNodeManager` hot load path toward patch/incremental extraction. | Complete | Removed slot-label full widget re-extraction; remaining full extraction work needs deeper load instrumentation. |
 | D8 | Make `useLayoutSync` dirty/flush behavior more granular. | Pending | Use R2 counters to guide this. |
 | D9 | Profile and implement next confirmed link drawing optimization. | Pending | No speculative link work without a profile. |
 | D10 | Move minimap model toward event-driven updates. | Pending | Earlier pan skip helped; full event model remains. |
@@ -584,3 +584,41 @@ Interpretation:
 - The velocity-aware enter window increases middle mounted nodes from `66` to `73` in this sample, which is the expected tradeoff for reducing edge pop-in while moving.
 - Close pan improved materially in this sample; middle pan changed only slightly.
 - Close wheel worsened in this single run. Treat wheel/pan latency as noisy until repeated sampling is added.
+
+### D7 useGraphNodeManager Slot-Label Patch Path
+
+Changes:
+
+- Replaced the `node:slot-label:changed` handler's `extractVueNodeData(nodeRef).widgets` call.
+- Slot-label changes now update only the affected `inputs` / `outputs` array reference and refresh widget slot metadata in place.
+- Added regression coverage that the widget array identity is preserved when only a slot label changes.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src\composables\graph\useGraphNodeManager.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; node output_sessions\replacer_input_latency_probe.cjs > output_sessions\d7-slot-label-patch-replacer-probe.json`
+
+Replacer probe comparison against D6:
+
+| Metric | D6 before | D7 after |
+| --- | ---: | ---: |
+| App ready | 3804 | 4958 |
+| Workflow load | 5018 | 8518 |
+| Probe total | 12839 | 17588 |
+| Far mounted nodes | 0 | 0 |
+| Far pan | 52.5 | 29.0 |
+| Far wheel | 28.3 | 30.4 |
+| Middle mounted nodes | 73 | 73 |
+| Middle pan | 61.6 | 52.1 |
+| Middle wheel | 38.4 | 37.5 |
+| Close mounted nodes | 29 | 29 |
+| Close pan | 30.9 | 48.1 |
+| Close wheel | 45.2 | 43.4 |
+
+Interpretation:
+
+- This is a targeted hot-path cleanup, not a full `useGraphNodeManager` rewrite.
+- It removes a defensible source of avoidable re-extraction during slot-label changes.
+- The Replacer sample is mixed: far/middle pan improved, close pan worsened, startup/load worsened versus the unusually fast D6 sample.
+- The next deeper `useGraphNodeManager` load work should be preceded by extraction-count/load-phase instrumentation, otherwise the branch risks speculative churn.

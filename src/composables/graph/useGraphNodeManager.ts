@@ -631,6 +631,25 @@ export function useGraphNodeManager(graph: LGraph): GraphNodeManager {
     }
   }
 
+  const refreshNodeSlotLabels = (
+    nodeId: string,
+    slotType: NodeSlotType | undefined
+  ) => {
+    const nodeRef = nodeRefs.get(nodeId)
+    const currentData = vueNodeData.get(nodeId)
+
+    if (!nodeRef || !currentData) return
+
+    if (slotType !== NodeSlotType.OUTPUT) {
+      currentData.inputs = nodeRef.inputs ? [...nodeRef.inputs] : undefined
+    }
+    if (slotType !== NodeSlotType.INPUT) {
+      currentData.outputs = nodeRef.outputs ? [...nodeRef.outputs] : undefined
+    }
+
+    refreshNodeSlots(nodeId)
+  }
+
   // Get access to original LiteGraph node (non-reactive)
   const getNode = (id: string): LGraphNode | undefined => {
     return nodeRefs.get(id)
@@ -888,22 +907,7 @@ export function useGraphNodeManager(graph: LGraph): GraphNodeManager {
       },
       'node:slot-label:changed': (slotLabelEvent) => {
         const nodeId = String(slotLabelEvent.nodeId)
-        const nodeRef = nodeRefs.get(nodeId)
-        if (!nodeRef) return
-
-        // Force shallowReactive to detect the deep property change
-        // by re-assigning the affected array through the defineProperty setter.
-        if (slotLabelEvent.slotType !== NodeSlotType.OUTPUT && nodeRef.inputs) {
-          nodeRef.inputs = [...nodeRef.inputs]
-        }
-        if (slotLabelEvent.slotType !== NodeSlotType.INPUT && nodeRef.outputs) {
-          nodeRef.outputs = [...nodeRef.outputs]
-        }
-        // Refresh widget data so promotedLabel reflects the rename without
-        // invalidating the full rendered node collection.
-        updateVueNodeData(nodeId, (currentData) => {
-          currentData.widgets = extractVueNodeData(nodeRef).widgets
-        })
+        refreshNodeSlotLabels(nodeId, slotLabelEvent.slotType)
       }
     }
 

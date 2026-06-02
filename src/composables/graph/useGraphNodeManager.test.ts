@@ -612,6 +612,32 @@ describe('Subgraph output slot label reactivity', () => {
     expect(orderedNodesWatcher).not.toHaveBeenCalled()
   })
 
+  it('does not re-extract widget data when only a slot label changes', async () => {
+    const graph = new LGraph()
+    const node = new LGraphNode('test')
+    node.addOutput('original_name', 'STRING')
+    node.addWidget('string', 'prompt', 'hello', () => undefined, {})
+    graph.add(node)
+
+    const { vueNodeData } = useGraphNodeManager(graph)
+    const nodeId = String(node.id)
+    const nodeData = vueNodeData.get(nodeId)
+    if (!nodeData?.widgets) throw new Error('Expected widget data to exist')
+
+    const initialWidgets = nodeData.widgets
+
+    node.outputs[0].label = 'custom_label'
+    graph.trigger('node:slot-label:changed', {
+      nodeId: node.id,
+      slotType: NodeSlotType.OUTPUT
+    })
+
+    await nextTick()
+
+    expect(nodeData.outputs?.[0]?.label).toBe('custom_label')
+    expect(nodeData.widgets).toBe(initialWidgets)
+  })
+
   it('ignores node:slot-label:changed for unknown node ids', () => {
     const graph = new LGraph()
     useGraphNodeManager(graph)
