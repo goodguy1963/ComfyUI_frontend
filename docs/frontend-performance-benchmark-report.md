@@ -225,3 +225,37 @@ Interpretation:
 - The pointer rect cache removes the targeted production rect-read source: `adjustMouseEvent()` move reads go from `60` to `0`.
 - The single after run is slightly noisier than the branch-before run in task/TBT, but it keeps p95 at `16.8ms`, reduces layouts from `12` to `10`, and removes the targeted geometry reads.
 - Use repeated median runs before making claims about small task-duration differences; the large original-to-branch improvement is directionally clear.
+
+## Repeated Three-Way Replacer Result
+
+The three-way Replacer benchmark was repeated with `5` samples per state on the full `8190` backend.
+
+Artifacts:
+
+- `output_sessions/replacer-three-way-repeat-20260602/samples-parsed.json`
+- `output_sessions/replacer-three-way-repeat-20260602/summary.json`
+
+Median results:
+
+| Replacer Vue pan, median of 5 | Original | Branch Before | Branch After |
+| --- | ---: | ---: | ---: |
+| Total duration | 16472.2 ms | 5436.2 ms | 5553.3 ms |
+| Task duration | 16448.1 ms | 4507.6 ms | 4656.7 ms |
+| Script duration | 2417.0 ms | 998.0 ms | 1042.6 ms |
+| Average frame | 41.9 ms | 16.9 ms | 16.8 ms |
+| P95 frame | 66.7 ms | 16.8 ms | 16.8 ms |
+| Layouts | 3 | 9 | 9 |
+| Layout duration | 1.5 ms | 5.3 ms | 5.1 ms |
+| Total blocking time | 204 ms | 0 ms | 0 ms |
+| `getBoundingClientRect()` calls | 835 | 835 | 774 |
+| `adjustMouseEvent()` move rect reads | 60 | 60 | 0 |
+| `drawConnections()` duration | 579.5 ms | 20.3 ms | 25.5 ms |
+| `computeVisibleNodes()` duration | 53.2 ms | 15.1 ms | 15.2 ms |
+| Mounted node average | 291.0 | 287.2 | 287.2 |
+
+Interpretation:
+
+- The branch improvement over original is stable across repeated runs. Median average frame time drops from `41.9ms` to `16.8-16.9ms`, and p95 drops from `66.7ms` to `16.8ms`.
+- The pointer rect cache is confirmed to remove the targeted production geometry reads: `adjustMouseEvent()` move reads go from `60` to `0`, and total rect reads drop from `835` to `774`.
+- The pointer cache is not a large standalone frame-time win. Branch After has the same p95, slightly lower median average frame, and slightly higher median task/script time than Branch Before. Treat this as a small cleanup, not the next major optimization.
+- The next performance block is remaining script time around the pan loop. The best next task is a CPU-profile pass on Branch After, focused on why median task duration is still about `4.7s` even after link drawing and production rect reads have been reduced.
