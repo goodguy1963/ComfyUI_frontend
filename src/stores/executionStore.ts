@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
+import type { Ref } from 'vue'
 
 import { useNodeProgressText } from '@/composables/node/useNodeProgressText'
 import { isCloud } from '@/platform/distribution/types'
@@ -112,6 +113,10 @@ export const useExecutionStore = defineStore('execution', () => {
    * Cleared at execution start and end to ensure fresh graph state.
    */
   const executionIdToLocatorCache = new Map<string, NodeLocatorId | undefined>()
+  const nodeLocationProgressStateRefs = new Map<
+    NodeLocatorId,
+    Ref<NodeProgressState | undefined>
+  >()
 
   function cachedExecutionIdToLocator(
     executionId: string
@@ -153,12 +158,11 @@ export const useExecutionStore = defineStore('execution', () => {
     return mergedState
   }
 
-  const nodeLocationProgressStates = computed<
-    Record<NodeLocatorId, NodeProgressState>
-  >(() => {
+  function buildNodeLocationProgressStates(
+    states: Record<string, NodeProgressState>
+  ): Record<NodeLocatorId, NodeProgressState> {
     const result: Record<NodeLocatorId, NodeProgressState> = {}
 
-    const states = nodeProgressStates.value // Apparently doing this inside `Object.entries` causes issues
     for (const state of Object.values(states)) {
       const parts = String(state.display_node_id).split(':')
       for (let i = 0; i < parts.length; i++) {
@@ -174,6 +178,49 @@ export const useExecutionStore = defineStore('execution', () => {
     }
 
     return result
+  }
+
+  function updateNodeLocationProgressStateRefs(
+    nextStates: Record<NodeLocatorId, NodeProgressState>
+  ) {
+    const activeLocatorIds = new Set(Object.keys(nextStates))
+
+    for (const [locatorId, nextState] of Object.entries(nextStates)) {
+      const refForLocator =
+        nodeLocationProgressStateRefs.get(locatorId) ??
+        shallowRef<NodeProgressState | undefined>()
+      if (!nodeLocationProgressStateRefs.has(locatorId)) {
+        nodeLocationProgressStateRefs.set(locatorId, refForLocator)
+      }
+      if (refForLocator.value !== nextState) {
+        refForLocator.value = nextState
+      }
+    }
+
+    for (const [locatorId, refForLocator] of nodeLocationProgressStateRefs) {
+      if (activeLocatorIds.has(locatorId)) continue
+      if (refForLocator.value !== undefined) {
+        refForLocator.value = undefined
+      }
+    }
+  }
+
+  function getNodeLocationProgressStateRef(
+    locatorId: NodeLocatorId
+  ): Ref<NodeProgressState | undefined> {
+    let refForLocator = nodeLocationProgressStateRefs.get(locatorId)
+    if (!refForLocator) {
+      refForLocator = shallowRef(nodeLocationProgressStates.value[locatorId])
+      nodeLocationProgressStateRefs.set(locatorId, refForLocator)
+    }
+    return refForLocator
+  }
+
+  const nodeLocationProgressStates = computed<
+    Record<NodeLocatorId, NodeProgressState>
+  >(() => {
+    // Apparently doing this inside `Object.entries` causes issues.
+    return buildNodeLocationProgressStates(nodeProgressStates.value)
   })
 
   // Easily access all currently executing node IDs
@@ -373,6 +420,7 @@ export const useExecutionStore = defineStore('execution', () => {
     }
     evictOldProgressJobs()
     nodeProgressStates.value = nodes
+    updateNodeLocationProgressStateRefs(buildNodeLocationProgressStates(nodes))
 
     // If we have progress for the currently executing node, update it for backwards compatibility
     if (executingNodeId.value && nodes[executingNodeId.value]) {
@@ -526,6 +574,7 @@ export const useExecutionStore = defineStore('execution', () => {
     executionIdToLocatorCache.clear()
     areNodeProgressVisualsSuppressed.value = false
     nodeProgressStates.value = {}
+    updateNodeLocationProgressStateRefs({})
     const jobId = jobIdParam ?? activeJobId.value ?? null
     if (jobId) {
       const map = { ...nodeProgressStatesByJob.value }
@@ -667,6 +716,7 @@ export const useExecutionStore = defineStore('execution', () => {
     executingNodeProgress,
     nodeProgressStates,
     nodeLocationProgressStates,
+    getNodeLocationProgressStateRef,
     nodeProgressStatesByJob,
     areNodeProgressVisualsSuppressed,
     runningJobIds,

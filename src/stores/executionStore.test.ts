@@ -416,6 +416,36 @@ describe('useExecutionStore - nodeProgressStatesByJob eviction', () => {
     )
     expect(store.nodeProgressStatesByJob).toHaveProperty('job-0')
   })
+
+  it('updates per-locator progress refs without replacing unrelated refs', () => {
+    const nodeOneRef = store.getNodeLocationProgressStateRef('1')
+    const nodeTwoRef = store.getNodeLocationProgressStateRef('2')
+
+    fireProgressState('job-1', makeProgressNodes('1', 'job-1'))
+
+    expect(nodeOneRef.value?.state).toBe('running')
+    expect(nodeTwoRef.value).toBeUndefined()
+
+    const nodeTwoValueBefore = nodeTwoRef.value
+    fireProgressState('job-1', {
+      '1': {
+        value: 8,
+        max: 10,
+        state: 'running',
+        node_id: '1',
+        prompt_id: 'job-1',
+        display_node_id: '1'
+      }
+    })
+
+    expect(nodeOneRef.value?.value).toBe(8)
+    expect(nodeTwoRef.value).toBe(nodeTwoValueBefore)
+
+    fireProgressState('job-1', makeProgressNodes('2', 'job-1'))
+
+    expect(nodeOneRef.value).toBeUndefined()
+    expect(nodeTwoRef.value?.state).toBe('running')
+  })
 })
 
 describe('useExecutionStore - reconcileInitializingJobs', () => {

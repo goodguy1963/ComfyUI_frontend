@@ -53,8 +53,8 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D8 | Make `useLayoutSync` dirty/flush behavior more granular. | Complete | Canvas-originated layout changes now skip LiteGraph writeback scheduling. |
 | D9 | Profile and implement next confirmed link drawing optimization. | Complete | Attribution confirmed far-zoom `drawConnections()` cost; far-zoom active pan now skips full link traversal. |
 | D10 | Move minimap model toward event-driven updates. | Complete: no-op | Attribution shows minimap is not the current pan bottleneck; avoid speculative changes. |
-| D11 | Add widget intrinsic sizing/cache API. | Pending | Correctness plus layout churn reduction. |
-| D12 | Continue queue/output/execution store selectorization. | Pending | Prior partial improvements exist; not complete. |
+| D11 | Add widget intrinsic sizing/cache API. | Complete: no-op | Existing resize correctness requires same-width remeasurement; defer until a real intrinsic invalidation model exists. |
+| D12 | Continue queue/output/execution store selectorization. | Complete | Vue node execution progress now uses per-locator refs instead of full progress-record subscription. |
 | D13 | Prototype OffscreenCanvas for minimap or far-zoom layer. | Pending | Start with a contained canvas layer only. |
 | D14 | Prototype worker spatial query/snapshot planning. | Pending | No UI rewrite. |
 | D15 | Evaluate optional Rust/WASM geometry kernel after worker boundary exists. | Pending | Last step, not near-term. |
@@ -747,3 +747,59 @@ Interpretation:
 - D10 is not the current performance blocker for Replacer pan.
 - A deeper minimap event-model rewrite would be speculative right now and would make the research branch dirtier without a measurable target.
 - The next minimap work should wait until a profile shows idle minimap scanning or minimap redraw time as a real cost.
+
+### D11 Widget Intrinsic Sizing Decision
+
+Decision:
+
+- No widget intrinsic sizing/cache behavior change was made in this task.
+
+Evidence:
+
+- Vue node resize currently probes minimum content height inside `useNodeResize.ts` by applying the candidate width and reading the node's DOM height.
+- Existing resize tests explicitly cover a same-width second move where widget/content minimum height changes and must be re-measured.
+- The codebase already has LiteGraph widget sizing hooks such as `computeLayoutSize()`, and Vue node ResizeObserver tracking already caches unchanged node measurements.
+- There is no reliable widget `layoutHash` or intrinsic invalidation signal available to safely key a resize min-content cache.
+
+Interpretation:
+
+- A width-only cache would reduce some forced DOM reads but would be incorrect for responsive widgets that become taller at the same candidate width.
+- D11 should stay deferred until widget implementations can report a stable intrinsic signature such as `minWidth`, `preferredWidth`, and `layoutHash`.
+- The next useful D11 work is instrumentation around widget intrinsic changes and resize-probe counts, not a blind cache in the resize hot path.
+
+### D12 Execution Progress Selectorization
+
+Changes:
+
+- Added per-locator execution progress refs in `executionStore`.
+- `useNodeExecutionState()` now subscribes to the selected node locator ref instead of reading the full `nodeLocationProgressStates` record.
+- Kept the existing full-record computed for canvas progress propagation and compatibility.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src\stores\executionStore.test.ts src\renderer\extensions\vueNodes\components\LGraphNode.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; node output_sessions\replacer_input_latency_probe.cjs > output_sessions\d12-execution-selector-replacer-probe.json`
+
+Replacer probe comparison against a D9 sample:
+
+| Metric | D9 sample | D12 after |
+| --- | ---: | ---: |
+| App ready | 3465 | 4783 |
+| Workflow load | 8360 | 8450 |
+| Probe total | 15768 | 17260 |
+| Far mounted nodes | 0 | 0 |
+| Far pan | 64.5 | 64.4 |
+| Far wheel | 33.2 | 40.3 |
+| Middle mounted nodes | 73 | 73 |
+| Middle pan | 48.7 | 57.5 |
+| Middle wheel | 35.6 | 34.9 |
+| Close mounted nodes | 29 | 29 |
+| Close pan | 30.7 | 31.0 |
+| Close wheel | 46.2 | 39.7 |
+
+Interpretation:
+
+- D12 is a store fan-out cleanup, not an idle-pan optimization.
+- Mounted node counts stayed unchanged in the Replacer probe.
+- Pan and wheel latency remains within the existing noisy range; the expected benefit is during execution/progress events, where unrelated mounted Vue nodes no longer have to observe the full progress-record identity.
