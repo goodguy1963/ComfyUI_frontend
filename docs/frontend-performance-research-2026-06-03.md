@@ -59,6 +59,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D14 | Prototype worker spatial query/snapshot planning. | Complete: no-op | Defer until spatial/snapshot planning is measured as the bottleneck. |
 | D15 | Evaluate optional Rust/WASM geometry kernel after worker boundary exists. | Complete: no-op | No worker boundary exists yet; WASM is premature. |
 | D16 | Add active-pan middle/close link rendering LOD. | Complete | Middle/close active-pan links use direct transient segments and approximate slot positions. |
+| D17 | Add live Replacer pan/zoom control probe and stabilize render-mode switching. | Complete | Wheel zoom no longer activates active-pan LOD; far-canvas mode uses hysteresis. |
 
 ## Commit Policy
 
@@ -946,3 +947,55 @@ Interpretation:
 - The end-to-end latency probe remains noisy and did not show the same win in this single sample.
 - This indicates the link-render CPU hotspot is now reduced, but action-to-paint latency still includes other work outside `drawConnections()`.
 - The next measured target should be a frame-phase attribution pass around input event to first paint, not another blind link-rendering patch.
+
+### D17 Live Control Probe And Render-Mode Hysteresis
+
+Problem:
+
+- Real wheel zoom felt springy because render detail switched while zooming through multiple scale bands.
+- The old `activePanDetailLevel` was tied to general transform settling, so wheel zoom could toggle middle/close LOD even when no canvas pan was active.
+- Far-zoom canvas mode used a hard cutoff, so zooming near the threshold could remount/unmount Vue nodes too eagerly.
+
+Changes:
+
+- Added `src/components/graph/renderModePolicy.ts` with unit-tested hysteresis.
+- Far-zoom canvas now enters at `0.16` and exits at `0.22`.
+- Active pan LOD now only activates during actual canvas pan, not wheel-only zoom.
+- Active pan middle/close detail now has hysteresis to avoid flapping around the old `0.35` boundary.
+- Added live development probe: `pnpm perf:replacer-live-control`.
+
+Live probe:
+
+- Loads the real Replacer workflow from the 8190 backend environment.
+- Runs middle-button pan at far, middle, and close scales.
+- Runs wheel zoom-in and zoom-out sweeps.
+- Records frame timing, `drawConnections()` timing, mounted Vue node counts, DOM mount mutations, far-canvas state, active-pan detail state, and render-mode transitions.
+- Writes full traces to `output_sessions/`; console output is a compact summary.
+
+Test commands:
+
+- `node node_modules\vitest\vitest.mjs run src\components\graph\renderModePolicy.test.ts src\renderer\core\layout\transform\TransformPane.test.ts src\renderer\extensions\vueNodes\components\LGraphNode.test.ts src\renderer\extensions\vueNodes\layout\useNodeDrag.test.ts src\renderer\core\layout\transform\panSnapshotCanvas.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; $env:REPLACER_LIVE_CONTROL_OUT='output_sessions\replacer-live-control-after-mode-policy.json'; node scripts\replacer-live-control-probe.cjs`
+
+Live Replacer result:
+
+| Scenario | Frame avg | Frame p95 | `drawConnections()` | Mode transitions | Warning |
+| --- | ---: | ---: | ---: | --- | --- |
+| Far pan `0.12` | 17.3 ms | 16.8 ms | 32.2 ms / 39 calls | `far-canvas` | None |
+| Middle pan `0.35` | 18.4 ms | 33.3 ms | 81.4 ms / 38 calls | `dom:none` -> `dom:middle` -> `dom:none` | None |
+| Close pan `0.65` | 21.6 ms | 33.4 ms | 95.3 ms / 41 calls | `dom:none` -> `dom:close` -> `dom:none` | None |
+| Wheel zoom in | 22.1 ms | 33.3 ms | 169.9 ms / 32 calls | `far-canvas` -> `dom:none` | None |
+| Wheel zoom out | 19.7 ms | 33.4 ms | 256.6 ms / 51 calls | `dom:none` -> `far-canvas` | None |
+
+Control signal:
+
+- `activePanDuringWheelSampleCount` was `0` for both wheel sweeps.
+- Wheel zoom now has one render-mode transition per direction instead of middle/close LOD switching during the zoom.
+- The probe reported no warnings.
+
+Interpretation:
+
+- The springy visual switching should be reduced because wheel zoom no longer hides/restores node internals at `0.35` and `0.65`.
+- Panning still uses active LOD during the drag and returns to full detail after release.
+- Remaining live pan cost is still mostly link/canvas work and viewport mount count changes, not repeated mode switching during wheel zoom.

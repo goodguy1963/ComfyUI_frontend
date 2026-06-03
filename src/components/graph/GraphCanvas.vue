@@ -145,6 +145,11 @@ import DomWidgets from '@/components/graph/DomWidgets.vue'
 import FarZoomNodeCanvas from '@/components/graph/FarZoomNodeCanvas.vue'
 import GraphCanvasMenu from '@/components/graph/GraphCanvasMenu.vue'
 import {
+  resolveActivePanDetail,
+  resolveFarZoomCanvasMode,
+  type ActivePanDetailLevel
+} from '@/components/graph/renderModePolicy'
+import {
   getHysteresisMountedNodeIds,
   getViewportNodeIdsWithLiteGraphFallback,
   getVelocityAwareViewportOverscan,
@@ -188,7 +193,6 @@ import { useCanvasStore } from '@/renderer/core/canvas/canvasStore'
 import { useCanvasInteractions } from '@/renderer/core/canvas/useCanvasInteractions'
 import { layoutStore } from '@/renderer/core/layout/store/layoutStore'
 import TransformPane from '@/renderer/core/layout/transform/TransformPane.vue'
-import { useTransformSettling } from '@/renderer/core/layout/transform/useTransformSettling'
 import { useTransformState } from '@/renderer/core/layout/transform/useTransformState'
 import MiniMap from '@/renderer/extensions/minimap/MiniMap.vue'
 import LGraphNode from '@/renderer/extensions/vueNodes/components/LGraphNode.vue'
@@ -249,34 +253,18 @@ const bootstrapStore = useBootstrapStore()
 const { isI18nReady, i18nError } = storeToRefs(bootstrapStore)
 const { isReady: isSettingsReady, error: settingsError } =
   storeToRefs(settingStore)
-const { isTransforming: isCanvasTransforming } = useTransformSettling(canvasRef, {
-  settleDelay: 96
-})
 const isMiddleCanvasPanning = ref(false)
+const shouldRenderFarZoomNodeCanvas = ref(false)
+const activePanDetailLevel = ref<ActivePanDetailLevel>('none')
 
 const STABLE_LOW_DETAIL_SCALE = 0.12
-const FAR_ZOOM_CANVAS_SCALE = 0.18
-const ACTIVE_PAN_MIDDLE_DETAIL_SCALE = 0.35
-const ACTIVE_PAN_CLOSE_DETAIL_SCALE = 0.65
 const ENABLE_MIDDLE_PAN_DOM_SNAPSHOT_FALLBACK = false
-
-type ActivePanDetailLevel = 'none' | 'middle' | 'close'
-
-const activePanDetailLevel = computed<ActivePanDetailLevel>(() => {
-  if (!isCanvasTransforming.value) return 'none'
-  if (camera.z <= STABLE_LOW_DETAIL_SCALE) return 'none'
-  if (camera.z <= ACTIVE_PAN_MIDDLE_DETAIL_SCALE) return 'middle'
-  if (camera.z <= ACTIVE_PAN_CLOSE_DETAIL_SCALE) return 'close'
-  return 'none'
-})
 
 const middlePanFallbackDetail = computed<ActivePanDetailLevel>(() => {
   if (!ENABLE_MIDDLE_PAN_DOM_SNAPSHOT_FALLBACK) return 'none'
   if (!isMiddleCanvasPanning.value) return 'none'
   if (camera.z <= STABLE_LOW_DETAIL_SCALE) return 'none'
-  if (camera.z <= ACTIVE_PAN_MIDDLE_DETAIL_SCALE) return 'middle'
-  if (camera.z <= ACTIVE_PAN_CLOSE_DETAIL_SCALE) return 'close'
-  return 'none'
+  return activePanDetailLevel.value
 })
 
 const betaMenuEnabled = computed(
@@ -303,9 +291,6 @@ const minimapEnabled = computed(() => settingStore.get('Comfy.Minimap.Visible'))
 
 // Feature flags
 const { shouldRenderVueNodes } = useVueFeatureFlags()
-const shouldRenderFarZoomNodeCanvas = computed(
-  () => shouldRenderVueNodes.value && camera.z <= FAR_ZOOM_CANVAS_SCALE
-)
 const shouldMountVueNodeDom = computed(
   () => shouldRenderVueNodes.value && !shouldRenderFarZoomNodeCanvas.value
 )
@@ -972,6 +957,19 @@ useRafFn(() => {
     !!canvas?.dragging_canvas &&
     canvas.pointer.isDown &&
     canvas.pointer.eDown?.button === 1
+  const canvasPanActive = !!canvas?.dragging_canvas && canvas.pointer.isDown
+
+  shouldRenderFarZoomNodeCanvas.value = resolveFarZoomCanvasMode({
+    scale: camera.z,
+    previous: shouldRenderFarZoomNodeCanvas.value,
+    vueNodesEnabled: shouldRenderVueNodes.value
+  })
+  activePanDetailLevel.value = resolveActivePanDetail({
+    scale: camera.z,
+    previous: activePanDetailLevel.value,
+    isCanvasPanning: canvasPanActive,
+    farZoomCanvasActive: shouldRenderFarZoomNodeCanvas.value
+  })
 
   if (isMiddleCanvasPanning.value !== middleCanvasPanActive) {
     if (isMiddleCanvasPanning.value && !middleCanvasPanActive) {
