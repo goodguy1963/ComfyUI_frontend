@@ -52,7 +52,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D7 | Rewrite `useGraphNodeManager` hot load path toward patch/incremental extraction. | Complete | Removed slot-label full widget re-extraction; remaining full extraction work needs deeper load instrumentation. |
 | D8 | Make `useLayoutSync` dirty/flush behavior more granular. | Complete | Canvas-originated layout changes now skip LiteGraph writeback scheduling. |
 | D9 | Profile and implement next confirmed link drawing optimization. | Complete | Attribution confirmed far-zoom `drawConnections()` cost; far-zoom active pan now skips full link traversal. |
-| D10 | Move minimap model toward event-driven updates. | Pending | Earlier pan skip helped; full event model remains. |
+| D10 | Move minimap model toward event-driven updates. | Complete: no-op | Attribution shows minimap is not the current pan bottleneck; avoid speculative changes. |
 | D11 | Add widget intrinsic sizing/cache API. | Pending | Correctness plus layout churn reduction. |
 | D12 | Continue queue/output/execution store selectorization. | Pending | Prior partial improvements exist; not complete. |
 | D13 | Prototype OffscreenCanvas for minimap or far-zoom layer. | Pending | Start with a contained canvas layer only. |
@@ -727,3 +727,23 @@ Interpretation:
 - The targeted rendering cost is fixed: far-zoom `drawConnections()` dropped from `292.8 ms` to `9.1 ms` in the attribution pan window.
 - The synthetic action-to-paint far-pan latency did not improve in the repeated latency probe; it remains noisy and likely measures more than link drawing.
 - Middle/close link rendering remains the next possible link target, but it should not be changed blindly. The remaining D9 follow-up would be a separate medium/close link-level simplification if user-visible IRL testing still reports lag there.
+
+### D10 Minimap Event Model Decision
+
+Decision:
+
+- No minimap behavior change was made in this task.
+
+Evidence:
+
+- `scripts/replacer-render-attribution.cjs` measured minimap canvas work in the same pan windows as link drawing.
+- Pre-D9 minimap canvas time was only `2.2 ms` far, `1.2 ms` middle, and `1.4 ms` close.
+- Post-D9 minimap canvas time was only `1.7 ms` far, `1.2 ms` middle, and `2.2 ms` close.
+- `useMinimap()` already skips its RAF graph change detection while `canvas.dragging_canvas && canvas.pointer.isDown`.
+- `useMinimapGraph()` already has event hooks for node add/remove, connection changes, selected visual property changes, API `graphChanged`, and layout-store version changes.
+
+Interpretation:
+
+- D10 is not the current performance blocker for Replacer pan.
+- A deeper minimap event-model rewrite would be speculative right now and would make the research branch dirtier without a measurable target.
+- The next minimap work should wait until a profile shows idle minimap scanning or minimap redraw time as a real cost.
