@@ -231,4 +231,40 @@ describe('drawConnections widget-input slot positioning', () => {
 
     expect(getNodeByIdSpy).not.toHaveBeenCalled()
   })
+
+  it('uses simple link LOD during middle-zoom Vue canvas pan', () => {
+    const sourceNode = new LGraphNode('Source')
+    sourceNode.pos = [0, 100]
+    sourceNode.size = [150, 60]
+    sourceNode.addOutput('out', 'STRING')
+    graph.add(sourceNode)
+
+    const targetNode = new LGraphNode('Target')
+    targetNode.pos = [300, 100]
+    targetNode.size = [200, 120]
+    targetNode.addInput('input', 'STRING')
+    graph.add(targetNode)
+
+    createTestLink(graph, sourceNode, 0, targetNode, 0)
+
+    LiteGraph.vueNodesMode = true
+    canvas.dragging_canvas = true
+    canvas.pointer.isDown = true
+    canvas.pointer.eDown = { button: 0 } as never
+    canvas.ds.scale = 0.45
+    canvas.visible_area = [-100, -100, 1000, 1000] as never
+
+    const renderLinkDirectSpy = vi.spyOn(canvas.linkRenderer!, 'renderLinkDirect')
+    const getReroutesSpy = vi.spyOn(LLink, 'getReroutes')
+    const ctx = createMockCtx()
+
+    canvas.drawConnections(ctx)
+
+    expect(renderLinkDirectSpy).not.toHaveBeenCalled()
+    expect(getReroutesSpy).not.toHaveBeenCalled()
+    expect(ctx.beginPath).toHaveBeenCalled()
+    expect(ctx.moveTo).toHaveBeenCalled()
+    expect(ctx.lineTo).toHaveBeenCalled()
+    expect(ctx.stroke).toHaveBeenCalled()
+  })
 })

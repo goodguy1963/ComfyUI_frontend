@@ -404,6 +404,7 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
   // Whether the canvas was previously being dragged prior to pressing space key.
   // null if space key is not pressed.
   private _previously_dragging_canvas: boolean | null = null
+  private _activePanLinkLodBatching = false
 
   // #region Legacy accessors
   /** @deprecated @inheritdoc {@link LGraphCanvasState.readOnly} */
@@ -6063,6 +6064,13 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     ctx.fillStyle = '#AAA'
     ctx.strokeStyle = '#AAA'
     ctx.globalAlpha = this.editor_alpha
+    const activePanLinkLod = this.shouldUseActivePanLinkLod()
+    if (activePanLinkLod) {
+      this._activePanLinkLodBatching = true
+      ctx.beginPath()
+      ctx.lineWidth = this.connections_width
+      ctx.strokeStyle = String(this.default_link_color)
+    }
     // for every node
     const nodes = graph._nodes
 
@@ -6090,7 +6098,9 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
       const key = `${node.id}:${slotIndex}:${isInput ? 'i' : 'o'}`
       const cached = slotPosCache.get(key)
       if (cached) return cached
-      const pos = getSlotPosition(node, slotIndex, isInput)
+      const pos = activePanLinkLod
+        ? this.getActivePanLodSlotPos(node, slotIndex, isInput)
+        : getSlotPosition(node, slotIndex, isInput)
       slotPosCache.set(key, pos)
       return pos
     }
@@ -6197,6 +6207,11 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
 
     if (graph.floatingLinks.size > 0) {
       this._renderFloatingLinks(ctx, graph, visibleReroutes, now, slotPosCache)
+    }
+
+    if (activePanLinkLod) {
+      ctx.stroke()
+      this._activePanLinkLodBatching = false
     }
 
     const rerouteSet = this._visibleReroutes
@@ -6333,6 +6348,30 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
   ) {
     const { graph, renderedPaths } = this
     if (!graph) return
+
+    if (this.shouldUseActivePanLinkLod()) {
+      link_bounding[0] = Math.min(startPos[0], endPos[0])
+      link_bounding[1] = Math.min(startPos[1], endPos[1])
+      link_bounding[2] = Math.max(startPos[0], endPos[0]) - link_bounding[0]
+      link_bounding[3] = Math.max(startPos[1], endPos[1]) - link_bounding[1]
+
+      if (!overlapBounding(link_bounding, margin_area)) return
+
+      this.renderLink(
+        ctx,
+        startPos,
+        endPos,
+        link,
+        false,
+        0,
+        null,
+        startDirection || LinkDirection.RIGHT,
+        endDirection || LinkDirection.LEFT,
+        { disabled }
+      )
+      renderedPaths.add(link)
+      return
+    }
 
     // Get all points this link passes through
     const reroutes = LLink.getReroutes(graph, link)
@@ -6496,6 +6535,71 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
     }
   }
 
+  private shouldUseActivePanLinkLod(): boolean {
+    return (
+      LiteGraph.vueNodesMode &&
+      this.dragging_canvas &&
+      this.pointer.isDown &&
+      this.ds.scale > VUE_NODES_FAR_ZOOM_PAN_LINK_SCALE
+    )
+  }
+
+  private renderActivePanLinkLod(
+    ctx: CanvasRenderingContext2D,
+    a: Readonly<Point>,
+    b: Readonly<Point>,
+    link: LLink | null,
+    color: CanvasColour | null,
+    disabled: boolean
+  ): void {
+    const strokeStyle =
+      color ??
+      link?.color ??
+      (link?.type ? LGraphCanvas.link_type_colors[link.type] : undefined) ??
+      this.default_link_color
+
+    if (!this._activePanLinkLodBatching) {
+      ctx.beginPath()
+    }
+    ctx.moveTo(a[0], a[1])
+    ctx.lineTo(b[0], b[1])
+    if (this._activePanLinkLodBatching) return
+
+    ctx.lineWidth = this.connections_width
+    ctx.strokeStyle =
+      disabled && this._pattern ? this._pattern : String(strokeStyle)
+    ctx.stroke()
+  }
+
+  private getActivePanLodSlotPos(
+    node: LGraphNode,
+    slotIndex: number,
+    isInput: boolean
+  ): Point {
+    if (node.flags.collapsed) {
+      const width = node._collapsed_width || LiteGraph.NODE_COLLAPSED_WIDTH
+      const halfTitle = LiteGraph.NODE_TITLE_HEIGHT * 0.5
+      return [
+        node.pos[0] + (isInput ? 0 : width),
+        node.pos[1] - halfTitle
+      ]
+    }
+
+    const slot = isInput ? node.inputs?.[slotIndex] : node.outputs?.[slotIndex]
+    if (slot?.pos) {
+      return [node.pos[0] + slot.pos[0], node.pos[1] + slot.pos[1]]
+    }
+
+    const offsetX = LiteGraph.NODE_SLOT_HEIGHT * 0.5
+    const slotY =
+      (slotIndex + 0.7) * LiteGraph.NODE_SLOT_HEIGHT +
+      (node.constructor.slot_start_y || 0)
+
+    return isInput
+      ? [node.pos[0] + offsetX, node.pos[1] + slotY]
+      : [node.pos[0] + node.size[0] + 1 - offsetX, node.pos[1] + slotY]
+  }
+
   /**
    * draws a link between two points
    * @param ctx Canvas 2D rendering context
@@ -6537,6 +6641,11 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
       disabled?: boolean
     } = {}
   ): void {
+    if (this.shouldUseActivePanLinkLod()) {
+      this.renderActivePanLinkLod(ctx, a, b, link, color, disabled)
+      return
+    }
+
     if (this.linkRenderer) {
       const context = this.buildLinkRenderContext()
       this.linkRenderer.renderLinkDirect(

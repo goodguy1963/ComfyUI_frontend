@@ -58,6 +58,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D13 | Prototype OffscreenCanvas for minimap or far-zoom layer. | Complete: scoped alternative | Attribution found far-zoom canvas draw cost; simplified compact draw path before adding worker complexity. |
 | D14 | Prototype worker spatial query/snapshot planning. | Complete: no-op | Defer until spatial/snapshot planning is measured as the bottleneck. |
 | D15 | Evaluate optional Rust/WASM geometry kernel after worker boundary exists. | Complete: no-op | No worker boundary exists yet; WASM is premature. |
+| D16 | Add active-pan middle/close link rendering LOD. | Complete | Middle/close active-pan links use direct transient segments and approximate slot positions. |
 
 ## Commit Policy
 
@@ -886,3 +887,62 @@ Reason:
 - D15 depends on a proven worker/compute boundary from D14.
 - The current confirmed wins are still JavaScript architecture and Canvas2D draw-shape reductions.
 - A WASM kernel would add build, packaging, and interop cost before there is evidence that raw geometry compute is the limiting factor.
+
+### D16 Active-Pan Link Rendering LOD
+
+Pre-change measurement:
+
+- Repeated D16 pre-attribution confirmed `drawConnections()` remained the middle/close pan hotspot.
+- Middle pan ranged from `120.4 ms` to `202.1 ms`.
+- Close pan ranged from `91.2 ms` to `120.0 ms`.
+- Minimap canvas work stayed low at roughly `1-3 ms`.
+
+Changes:
+
+- Added a Vue-node active canvas pan LOD path for middle/close zoom.
+- During active canvas pan, links render as direct transient line segments.
+- The LOD path bypasses the full link adapter, `Path2D` generation, center-marker/hit-test layout writes, reroute expansion, and DOM/layout-store slot position lookup.
+- During active pan, slot positions use a graph-model approximation. Full DOM-backed slot positions, reroutes, markers, path hit testing, and layout writes return when pan stops.
+- Far zoom behavior remains unchanged: full link traversal is still skipped there.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src\lib\litegraph\src\LGraphCanvas.drawConnections.test.ts src\renderer\core\canvas\pathRenderer.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; $env:REPLACER_RENDER_ATTRIBUTION_OUT='output_sessions\d16-link-lod-slot-approx-render-attribution.json'; node scripts\replacer-render-attribution.cjs`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; node output_sessions\replacer_input_latency_probe.cjs > output_sessions\d16-link-lod-replacer-probe.json`
+
+Render attribution result:
+
+| Scenario | Before D16 range | D16 after |
+| --- | ---: | ---: |
+| Far `drawConnections()` | ~10-14 ms | 10.0 ms |
+| Middle `drawConnections()` | 120.4-202.1 ms | 46.4 ms |
+| Close `drawConnections()` | 91.2-120.0 ms | 43.7 ms |
+| Middle mounted nodes | 72-73 | 72-73 |
+| Close mounted nodes | 24-29 | 24-29 |
+| Minimap canvas | ~1-3 ms | 1.3-1.7 ms |
+
+Single-sample Replacer latency comparison against D13:
+
+| Metric | D13 | D16 after |
+| --- | ---: | ---: |
+| App ready | 4693 | 3702 |
+| Workflow load | 8472 | 8561 |
+| Probe total | 17144 | 16435 |
+| Far mounted nodes | 0 | 0 |
+| Far pan | 23.8 | 41.4 |
+| Far wheel | 35.2 | 39.4 |
+| Middle mounted nodes | 73 | 73 |
+| Middle pan | 43.2 | 50.7 |
+| Middle wheel | 36.8 | 43.4 |
+| Close mounted nodes | 29 | 29 |
+| Close pan | 29.3 | 30.6 |
+| Close wheel | 44.6 | 44.9 |
+
+Interpretation:
+
+- The targeted render hotspot improved substantially: middle/close active-pan `drawConnections()` moved from the `90-200 ms` range into the `40-50 ms` range.
+- The end-to-end latency probe remains noisy and did not show the same win in this single sample.
+- This indicates the link-render CPU hotspot is now reduced, but action-to-paint latency still includes other work outside `drawConnections()`.
+- The next measured target should be a frame-phase attribution pass around input event to first paint, not another blind link-rendering patch.
