@@ -70,6 +70,8 @@ async function installLiveControlInstrumentation(page) {
       mountedMutationRemoves: 0,
       longTasks: [],
       startedAt: 0,
+      inputEvents: [],
+      phaseSamples: [],
       frameTimestamps: [],
       modeSamples: [],
       modeTransitions: []
@@ -110,6 +112,57 @@ async function installLiveControlInstrumentation(page) {
       }
     }
 
+    const recordInputPhase = (phase, eventRecord, extra = {}) => {
+      if (!win.__replacerLiveControlActive || !eventRecord) return
+
+      const counters = win.__replacerLiveControlCounters
+      counters.phaseSamples.push({
+        phase,
+        eventType: eventRecord.type,
+        eventIndex: eventRecord.index,
+        dtMs: performance.now() - eventRecord.at,
+        scale: win.app?.canvas?.ds?.scale ?? null,
+        mountedNodes: document.querySelectorAll('[data-node-id]').length,
+        ...extra
+      })
+    }
+
+    const getLatestInputEvent = () => {
+      const events = win.__replacerLiveControlCounters?.inputEvents ?? []
+      return events.length ? events[events.length - 1] : null
+    }
+
+    const recordInputEvent = (event) => {
+      if (!win.__replacerLiveControlActive) return
+      if (
+        event.type === 'pointermove' &&
+        event.buttons === 0 &&
+        !event.getModifierState?.('Space')
+      ) {
+        return
+      }
+
+      const counters = win.__replacerLiveControlCounters
+      const eventRecord = {
+        index: counters.inputEvents.length,
+        type: event.type,
+        at: performance.now(),
+        button: event.button,
+        buttons: event.buttons,
+        deltaY: 'deltaY' in event ? event.deltaY : undefined,
+        scale: win.app?.canvas?.ds?.scale ?? null,
+        mountedNodes: document.querySelectorAll('[data-node-id]').length
+      }
+      counters.inputEvents.push(eventRecord)
+
+      requestAnimationFrame(() => {
+        recordInputPhase('first-raf', eventRecord)
+        requestAnimationFrame(() => {
+          recordInputPhase('second-raf', eventRecord)
+        })
+      })
+    }
+
     win.__replacerLiveControlStart = () => {
       const counters = createCounters()
       counters.startedAt = performance.now()
@@ -120,9 +173,10 @@ async function installLiveControlInstrumentation(page) {
         win.__replacerLiveControlLongTaskObserver = new PerformanceObserver(
           (list) => {
             if (!win.__replacerLiveControlActive) return
+            const activeCounters = win.__replacerLiveControlCounters
             for (const entry of list.getEntries()) {
-              if (entry.startTime < counters.startedAt) continue
-              counters.longTasks.push({
+              if (entry.startTime < activeCounters.startedAt) continue
+              activeCounters.longTasks.push({
                 startTime: entry.startTime,
                 duration: entry.duration
               })
@@ -140,9 +194,14 @@ async function installLiveControlInstrumentation(page) {
         canvas.__replacerLiveControlOriginalSetDirty = canvas.setDirty
         canvas.setDirty = function (foreground, background) {
           if (win.__replacerLiveControlActive) {
-            if (foreground) counters.setDirtyForegroundCalls++
-            if (background) counters.setDirtyBackgroundCalls++
-            if (foreground && background) counters.setDirtyBothCalls++
+            const activeCounters = win.__replacerLiveControlCounters
+            if (foreground) activeCounters.setDirtyForegroundCalls++
+            if (background) activeCounters.setDirtyBackgroundCalls++
+            if (foreground && background) activeCounters.setDirtyBothCalls++
+            recordInputPhase('set-dirty', getLatestInputEvent(), {
+              foreground: Boolean(foreground),
+              background: Boolean(background)
+            })
           }
           return canvas.__replacerLiveControlOriginalSetDirty.call(
             this,
@@ -162,12 +221,19 @@ async function installLiveControlInstrumentation(page) {
               args
             )
           }
-          return timeCall('drawConnectionsCalls', 'drawConnectionsMs', () =>
-            canvas.__replacerLiveControlOriginalDrawConnections.apply(
-              this,
-              args
+          const latestEvent = getLatestInputEvent()
+          recordInputPhase('draw-connections-start', latestEvent)
+          const result = timeCall(
+            'drawConnectionsCalls',
+            'drawConnectionsMs',
+            () =>
+              canvas.__replacerLiveControlOriginalDrawConnections.apply(
+                this,
+                args
+              )
             )
-          )
+          recordInputPhase('draw-connections-end', latestEvent)
+          return result
         }
       }
 
@@ -181,6 +247,8 @@ async function installLiveControlInstrumentation(page) {
               args
             )
           }
+          const latestEvent = getLatestInputEvent()
+          recordInputPhase('compute-visible-start', latestEvent)
           return timeCall(
             'computeVisibleNodesCalls',
             'computeVisibleNodesMs',
@@ -191,6 +259,16 @@ async function installLiveControlInstrumentation(page) {
               )
           )
         }
+      }
+
+      if (!win.__replacerLiveControlInputListenersInstalled) {
+        for (const eventType of ['pointerdown', 'pointermove', 'wheel']) {
+          document.addEventListener(eventType, recordInputEvent, {
+            capture: true,
+            passive: true
+          })
+        }
+        win.__replacerLiveControlInputListenersInstalled = true
       }
 
       const mutationObserver = new MutationObserver((mutations) => {
@@ -251,12 +329,45 @@ async function installLiveControlInstrumentation(page) {
       const mountedSamples = counters.modeSamples.map(
         (sample) => sample.mountedNodes
       )
+      const summarizePhase = (phase) => {
+        const samples = counters.phaseSamples.filter(
+          (sample) => sample.phase === phase
+        )
+        const values = samples
+          .map((sample) => sample.dtMs)
+          .filter((value) => Number.isFinite(value))
+          .sort((a, b) => a - b)
+
+        return {
+          count: values.length,
+          averageMs: values.length
+            ? values.reduce((sum, value) => sum + value, 0) / values.length
+            : 0,
+          p95Ms: values.length
+            ? values[Math.ceil(values.length * 0.95) - 1]
+            : 0,
+          maxMs: values.length ? values[values.length - 1] : 0
+        }
+      }
       const activePanDuringWheelSamples = counters.modeSamples.filter(
         (sample) => sample.activePanDetail !== 'none' && !sample.middlePanActive
+      )
+      const phaseSummary = Object.fromEntries(
+        [
+          'set-dirty',
+          'compute-visible-start',
+          'draw-connections-start',
+          'draw-connections-end',
+          'first-raf',
+          'second-raf'
+        ].map((phase) => [phase, summarizePhase(phase)])
       )
 
       return {
         ...counters,
+        inputEvents: counters.inputEvents.slice(0, 500),
+        phaseSamples: counters.phaseSamples.slice(0, 1500),
+        phaseSummary,
         frameTimestamps: undefined,
         modeSamples: counters.modeSamples.slice(0, 1500),
         frameCount: frameDurations.length,
@@ -293,6 +404,17 @@ function summarizeScenario(scenario) {
     frameP95Ms: Number(counters.frameP95Ms.toFixed(1)),
     drawConnectionsMs: Number(counters.drawConnectionsMs.toFixed(1)),
     drawConnectionsCalls: counters.drawConnectionsCalls,
+    phaseSummary: Object.fromEntries(
+      Object.entries(counters.phaseSummary ?? {}).map(([phase, summary]) => [
+        phase,
+        {
+          count: summary.count,
+          averageMs: Number(summary.averageMs.toFixed(1)),
+          p95Ms: Number(summary.p95Ms.toFixed(1)),
+          maxMs: Number(summary.maxMs.toFixed(1))
+        }
+      ])
+    ),
     mountedMin: counters.mountedMin,
     mountedMax: counters.mountedMax,
     modeTransitions: counters.modeTransitions.map((transition) => ({

@@ -61,6 +61,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D16 | Add active-pan middle/close link rendering LOD. | Complete | Middle/close active-pan links use direct transient segments and approximate slot positions. |
 | D17 | Add live Replacer pan/zoom control probe and stabilize render-mode switching. | Complete | Wheel zoom no longer activates active-pan LOD; far-canvas mode uses hysteresis. |
 | D18 | Keep low-detail/middle zoom connection slots mounted. | Complete | Low-detail nodes render dot-only slots so new links can still be created. |
+| D19 | Add input-to-frame phase attribution for live Replacer pan/zoom. | Complete | Live probe now records input event, dirty, compute, draw, RAF, and mode/mount phases. |
 
 ## Commit Policy
 
@@ -1030,3 +1031,47 @@ Live control signal:
 - Middle zoom still entered `dom:middle` only during pan.
 - Wheel zoom still had `activePanDuringWheelSampleCount: 0`.
 - The probe now has explicit fields for `lowDetailNodes`, `lowDetailSlotAreas`, and `lowDetailSlotDots` so future runs can catch connection-target regressions.
+
+### D19 Input-To-Frame Phase Attribution
+
+Problem:
+
+- The live control probe showed frame p95 spikes, but did not identify whether the delay came before dirty scheduling, inside canvas draw, during Vue mount changes, or after the first RAF.
+- Without this phase data, the next optimization would be speculative.
+
+Changes:
+
+- Extended `scripts/replacer-live-control-probe.cjs` to record:
+  - input events (`pointerdown`, active `pointermove`, `wheel`)
+  - time from latest input to `setDirty()`
+  - time from latest input to `computeVisibleNodes()`
+  - time from latest input to `drawConnections()` start/end
+  - first and second RAF after input
+  - mounted-node counts and render-mode transitions
+- Fixed the probe wrappers so repeated scenarios use the current counter object instead of a stale first-scenario closure.
+
+Test command:
+
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; $env:REPLACER_LIVE_CONTROL_OUT='output_sessions\replacer-live-control-d19-phase-attribution.json'; node scripts\replacer-live-control-probe.cjs`
+
+Live Replacer D19 result:
+
+| Scenario | Frame p95 | Draw p95 from input | First RAF p95 | Second RAF p95 | Key signal |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Far pan | 16.8 ms | 42.8 ms start / 54.6 ms end | 9.2 ms | 36.8 ms | Far canvas remains stable; no mount churn. |
+| Middle pan | 33.3 ms | 52.9 ms start / 57.4 ms end | 67.3 ms | 110.8 ms | Active pan enters `dom:middle`; mounted nodes drop `231 -> 85`. |
+| Close pan | 33.4 ms | 169.5 ms start / 173.8 ms end | 51.4 ms | 120.6 ms | Mounted nodes drop `85 -> 46`; dirty/draw phases are delayed. |
+| Wheel zoom in | 33.4 ms | 407.2 ms start / 410.5 ms end | 42.1 ms | 301.1 ms | Crossing `far-canvas -> DOM` mounts up to `170` nodes. |
+| Wheel zoom out | 50.0 ms | 91.7 ms start / 98.8 ms end | 58.8 ms | 120.0 ms | Crossing `DOM -> far-canvas` unmounts DOM nodes. |
+
+Interpretation:
+
+- The strongest remaining problem is not middle/close active LOD switching during wheel zoom; that stayed fixed with `activePanDuringWheelSampleCount = 0`.
+- The largest phase delays happen when the renderer crosses the far-canvas/DOM boundary and when mounted node counts change substantially during interaction.
+- `drawConnections()` is still non-trivial, but D19 shows delayed draw start and mount churn are now at least as important as raw draw duration.
+
+Next optimization:
+
+- Freeze or defer Vue mount-set changes during active pan/zoom, then reconcile after the interaction settles.
+- Keep the currently mounted DOM set stable while the user is moving, except for far-canvas mode itself.
+- Add a live probe assertion that mounted node add/remove counts remain near zero during active pan/zoom windows.
