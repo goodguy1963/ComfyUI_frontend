@@ -183,6 +183,7 @@ function useNodeDragIndividual() {
     }
 
     layoutStore.setTransientNodePositions(updates)
+    canvasStore.canvas?.setDirty(false, true)
 
     if (selectedGroups && selectedGroups.length > 0 && lastCanvasDelta) {
       const frameDelta = {

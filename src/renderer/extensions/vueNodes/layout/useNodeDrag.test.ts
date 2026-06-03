@@ -41,6 +41,7 @@ const testState = vi.hoisted(() => {
         stop: ReturnType<typeof vi.fn>
       } | null
     },
+    canvasSetDirty: vi.fn(),
     mockDs: { offset: [0, 0] as [number, number], scale: 1 }
   }
 })
@@ -68,6 +69,7 @@ vi.mock('@/renderer/core/canvas/canvasStore', () => ({
     canvas: {
       ds: testState.mockDs,
       auto_pan_speed: 10,
+      setDirty: testState.canvasSetDirty,
       canvas: {
         getBoundingClientRect: () => ({
           left: 0,
@@ -143,6 +145,7 @@ describe('useNodeDrag', () => {
     testState.setTransientNodePositions.mockReset()
     testState.commitTransientNodePositions.mockReset()
     testState.discardTransientNodePositions.mockReset()
+    testState.canvasSetDirty.mockReset()
     testState.nodeSnap.shouldSnap.mockReset()
     testState.nodeSnap.shouldSnap.mockReturnValue(false)
     testState.nodeSnap.applySnapToPosition.mockReset()
@@ -150,6 +153,7 @@ describe('useNodeDrag', () => {
       (pos: { x: number; y: number }) => pos
     )
     testState.cancelAnimationFrame.mockReset()
+    testState.canvasSetDirty.mockReset()
     testState.requestAnimationFrameCallback = null
     testState.capturedOnPan.current = null
     testState.capturedAutoPanInstance.current = null
@@ -185,6 +189,7 @@ describe('useNodeDrag', () => {
       { nodeId: '1', position: { x: 120, y: 120 } },
       { nodeId: '2', position: { x: 220, y: 200 } }
     ])
+    expect(testState.canvasSetDirty).toHaveBeenCalledWith(false, true)
     expect(testState.mutationFns.batchMoveNodes).not.toHaveBeenCalled()
     expect(testState.mutationFns.moveNode).not.toHaveBeenCalled()
   })

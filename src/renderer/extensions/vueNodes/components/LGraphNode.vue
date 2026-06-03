@@ -90,8 +90,8 @@
         )
       "
       :style="{
-        '--component-node-background': applyLightThemeColor(nodeData.bgcolor),
-        backgroundColor: applyLightThemeColor(nodeData?.color)
+        '--component-node-background': nodeBodyColor,
+        backgroundColor: nodeHeaderColor
       }"
     >
       <div
@@ -330,7 +330,10 @@ import { useNodeDrag } from '@/renderer/extensions/vueNodes/layout/useNodeDrag'
 import { useNodeLayout } from '@/renderer/extensions/vueNodes/layout/useNodeLayout'
 import { useNodePreviewState } from '@/renderer/extensions/vueNodes/preview/useNodePreviewState'
 import { nonWidgetedInputs } from '@/renderer/extensions/vueNodes/utils/nodeDataUtils'
-import { applyLightThemeColor } from '@/renderer/extensions/vueNodes/utils/nodeStyleUtils'
+import {
+  applyLightThemeColor,
+  applyReadableNodeLodColor
+} from '@/renderer/extensions/vueNodes/utils/nodeStyleUtils'
 import { app } from '@/scripts/app'
 import { useMissingModelStore } from '@/platform/missingModel/missingModelStore'
 import { useExecutionErrorStore } from '@/stores/executionErrorStore'
@@ -681,8 +684,20 @@ const isTransparentHeaderless = computed(
     isTransparent(nodeData.bgcolor)
 )
 
+const nodeBodyColor = computed(() =>
+  lowDetail.value || activePanDetail !== 'none'
+    ? applyReadableNodeLodColor(nodeData.bgcolor ?? nodeData.color, '#475569')
+    : applyLightThemeColor(nodeData.bgcolor)
+)
+
+const nodeHeaderColor = computed(() =>
+  lowDetail.value || activePanDetail !== 'none'
+    ? applyReadableNodeLodColor(nodeData.color, '#64748b')
+    : applyLightThemeColor(nodeData?.color)
+)
+
 const lowDetailHeaderColor = computed(
-  () => applyLightThemeColor(nodeData?.color) || 'var(--color-slate-700)'
+  () => nodeHeaderColor.value || 'var(--color-slate-700)'
 )
 
 const canRenderResizeHandles = computed(

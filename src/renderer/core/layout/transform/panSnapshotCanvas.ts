@@ -51,8 +51,8 @@ export interface PanSnapshotDeltaTransform {
 
 const OFFSCREEN_PADDING_PX = 96
 const MIN_VISIBLE_NODE_SIZE_PX = 6
-const DEFAULT_HEADER_FILL = '#334155'
-const DEFAULT_BODY_FILL = '#1f2937'
+const DEFAULT_HEADER_FILL = '#64748b'
+const DEFAULT_BODY_FILL = '#475569'
 const DEFAULT_STROKE = 'rgba(148, 163, 184, 0.45)'
 const DEFAULT_ERROR_STROKE = 'rgba(248, 113, 113, 0.85)'
 const DEFAULT_ACTIVE_STROKE = 'rgba(96, 165, 250, 0.9)'
@@ -93,7 +93,7 @@ function readableSnapshotFill(
     return fallback
   }
 
-  return colorLuminance(color) < 0.07 ? fallback : color
+  return colorLuminance(color) < 0.1 ? fallback : color
 }
 
 function buildStroke(node: PanSnapshotNode): string {

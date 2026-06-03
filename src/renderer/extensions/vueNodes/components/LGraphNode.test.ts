@@ -506,11 +506,12 @@ describe('LGraphNode', () => {
   it('keeps a cheap readable title in low detail mode', () => {
     mockData.mockCamera.z = 0.25
 
-    renderLGraphNode(
+    const { container } = renderLGraphNode(
       {
         nodeData: {
           ...mockNodeData,
           color: '#000000',
+          bgcolor: '#000000',
           widgets: [{ name: 'strength', type: 'number' }]
         }
       },
@@ -523,6 +524,13 @@ describe('LGraphNode', () => {
       }
     )
 
+    const root = getNodeRoot(container)
+    const inner = screen.getByTestId('node-inner-wrapper')
+    expect(inner).toHaveStyle({ backgroundColor: '#64748b' })
+    expect(root).toHaveStyle({ opacity: '1' })
+    expect(
+      inner.style.getPropertyValue('--component-node-background')
+    ).toBe('#475569')
     expect(screen.getByTestId('node-low-detail-header')).toHaveTextContent(
       'Test Node'
     )

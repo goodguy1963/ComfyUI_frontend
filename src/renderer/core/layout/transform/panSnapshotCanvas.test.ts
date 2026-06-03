@@ -113,8 +113,8 @@ describe('panSnapshotCanvas', () => {
       height: 720
     })
 
-    expect(node.headerFill).toBe('#334155')
-    expect(node.bodyFill).toBe('#1f2937')
+    expect(node.headerFill).toBe('#64748b')
+    expect(node.bodyFill).toBe('#475569')
   })
 
   it('does not draw title text for far-zoom compact nodes', () => {
