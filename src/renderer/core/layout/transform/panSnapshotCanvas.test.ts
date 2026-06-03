@@ -117,6 +117,28 @@ describe('panSnapshotCanvas', () => {
     expect(node.bodyFill).toBe('#475569')
   })
 
+  it('keeps an error stroke on snapshot nodes with errors', () => {
+    const camera: PanSnapshotCamera = { x: 0, y: 0, z: 0.5 }
+    const nodes: PanSnapshotNode[] = [
+      {
+        id: 'error',
+        title: 'Missing Lora',
+        x: 10,
+        y: 10,
+        width: 240,
+        height: 160,
+        hasErrors: true
+      }
+    ]
+
+    const [node] = buildPanSnapshotPlan(nodes, camera, {
+      width: 1280,
+      height: 720
+    })
+
+    expect(node.stroke).toBe('rgba(248, 113, 113, 0.85)')
+  })
+
   it('does not draw title text for far-zoom compact nodes', () => {
     const ctx = createMockCanvasContext()
     const node: PanSnapshotDrawNode = {

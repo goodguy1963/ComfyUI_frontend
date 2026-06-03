@@ -373,6 +373,31 @@ describe('LGraphNode', () => {
     expect(getNodeRoot(container)).toHaveAttribute('data-motion-lod-eligible')
   })
 
+  it('keeps error nodes eligible for middle motion LOD styling', () => {
+    const { container } = renderLGraphNodeInTransformPane(
+      {
+        nodeData: {
+          ...mockNodeData,
+          hasErrors: true,
+          widgets: [{ name: 'strength', type: 'number' }]
+        }
+      },
+      'middle',
+      {
+        stubs: {
+          NodeWidgets: nodeWidgetsStub
+        }
+      }
+    )
+
+    const root = container.querySelector('[data-node-id="test-node-123"]')
+    const inner = screen.getByTestId('node-inner-wrapper')
+
+    expect(root).toHaveAttribute('data-motion-lod-eligible')
+    expect(inner).toHaveClass('ring-destructive-background')
+    expect(screen.queryByTestId('node-widgets-stub')).not.toBeInTheDocument()
+  })
+
   it('prunes expensive internals during middle active pan detail', () => {
     mockData.mockLatestPreviewUrl = 'blob:preview'
     mockData.mockShouldShowPreviewImg = true
@@ -554,8 +579,59 @@ describe('LGraphNode', () => {
       'overflow-hidden'
     )
     expect(screen.queryByTestId('node-header-stub')).not.toBeInTheDocument()
+    expect(screen.getByTestId('node-low-detail-body')).toBeInTheDocument()
     expect(screen.getByTestId('node-low-detail-slots')).toBeInTheDocument()
     expect(screen.getByTestId('node-slots-stub')).toBeInTheDocument()
+    expect(screen.queryByTestId('node-widgets-stub')).not.toBeInTheDocument()
+  })
+
+  it('renders error nodes with the same low detail shell and an error ring', () => {
+    mockData.mockCamera.z = 0.25
+
+    const { container } = renderLGraphNode(
+      {
+        nodeData: {
+          ...mockNodeData,
+          hasErrors: true,
+          inputs: [
+            {
+              name: 'image',
+              type: 'IMAGE',
+              link: null,
+              boundingRect: [0, 0, 0, 0]
+            }
+          ],
+          outputs: [
+            {
+              name: 'image',
+              type: 'IMAGE',
+              links: null,
+              boundingRect: [0, 0, 0, 0]
+            }
+          ],
+          widgets: [{ name: 'strength', type: 'number' }]
+        }
+      },
+      {
+        stubs: {
+          NodeHeader: nodeHeaderStub,
+          NodeSlots: nodeSlotsStub,
+          NodeWidgets: nodeWidgetsStub
+        }
+      }
+    )
+
+    const root = getNodeRoot(container)
+    const inner = screen.getByTestId('node-inner-wrapper')
+
+    expect(root).toHaveAttribute('data-low-detail', 'true')
+    expect(inner).toHaveClass('ring-destructive-background')
+    expect(screen.getByTestId('node-low-detail-header')).toHaveTextContent(
+      'Test Node'
+    )
+    expect(screen.getByTestId('node-low-detail-body')).toBeInTheDocument()
+    expect(screen.getByTestId('node-low-detail-slots')).toBeInTheDocument()
+    expect(screen.queryByTestId('node-header-stub')).not.toBeInTheDocument()
     expect(screen.queryByTestId('node-widgets-stub')).not.toBeInTheDocument()
   })
 

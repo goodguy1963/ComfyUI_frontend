@@ -131,6 +131,15 @@
         </span>
       </div>
       <div
+        v-if="lowDetail"
+        data-testid="node-low-detail-body"
+        class="pointer-events-none absolute inset-x-0 bottom-0 bg-component-node-background"
+        :class="[
+          displayHeader ? 'top-7' : 'top-0',
+          displayHeader ? bodyRoundingClass : shapeClass
+        ]"
+      />
+      <div
         v-if="lowDetail && canRenderLowDetailSlots"
         data-testid="node-low-detail-slots"
         class="pointer-events-auto absolute inset-x-0 top-7 bottom-0 flex items-center"
@@ -443,7 +452,6 @@ const lowDetail = computed(
     camera.z <= STABLE_LOW_DETAIL_SCALE &&
     !isSelected.value &&
     !executing.value &&
-    !hasAnyError.value &&
     !isCollapsed.value &&
     !isRerouteNode.value &&
     !isGhostPlacing.value
@@ -453,7 +461,6 @@ const motionLodEligible = computed(
   () =>
     !isSelected.value &&
     !executing.value &&
-    !hasAnyError.value &&
     !isCollapsed.value &&
     !isRerouteNode.value &&
     !isGhostPlacing.value

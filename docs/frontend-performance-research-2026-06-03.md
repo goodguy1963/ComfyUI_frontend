@@ -62,6 +62,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D17 | Add live Replacer pan/zoom control probe and stabilize render-mode switching. | Complete | Wheel zoom no longer activates active-pan LOD; far-canvas mode uses hysteresis. |
 | D18 | Keep low-detail/middle zoom connection slots mounted. | Complete | Low-detail nodes render dot-only slots so new links can still be created. |
 | D19 | Add input-to-frame phase attribution for live Replacer pan/zoom. | Complete | Live probe now records input event, dirty, compute, draw, RAF, and mode/mount phases. |
+| D20 | Align low-detail and far-canvas visuals for error/missing-model nodes. | Complete | Error nodes now use the same LOD shell as normal nodes while preserving red error indicators. |
 
 ## Commit Policy
 
@@ -1075,3 +1076,46 @@ Next optimization:
 - Freeze or defer Vue mount-set changes during active pan/zoom, then reconcile after the interaction settles.
 - Keep the currently mounted DOM set stable while the user is moving, except for far-canvas mode itself.
 - Add a live probe assertion that mounted node add/remove counts remain near zero during active pan/zoom windows.
+
+### D20 Low-Detail Error Node Visual Consistency
+
+Problem:
+
+- Missing-model / missing-Lora nodes were excluded from low-detail and middle motion LOD.
+- That made red/error nodes render at a different detail level than neighboring nodes during middle zoom, creating visual jumps and heavier DOM work.
+- Low-detail nodes had a readable header and slot dots, but no explicit body fill layer, so some nodes could still look like stripped or blacked-out shells.
+- Far-zoom canvas snapshots supported error strokes, but the far canvas did not pass `LGraphNode.has_errors` into the snapshot node.
+
+Changes:
+
+- Removed `hasAnyError` from low-detail and middle motion LOD eligibility.
+- Kept the existing red error ring on Vue nodes, so error state remains visible without forcing full-detail rendering.
+- Added a low-detail body fill layer using `--component-node-background`, matching the close-zoom body/header visual structure.
+- Passed `node.has_errors` into the far-zoom snapshot renderer so far-canvas nodes keep the red error stroke.
+
+Test commands:
+
+- `node node_modules\vitest\vitest.mjs run src\renderer\extensions\vueNodes\components\LGraphNode.test.ts src\renderer\core\layout\transform\panSnapshotCanvas.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; $env:REPLACER_LIVE_CONTROL_OUT='output_sessions\replacer-live-control-visual-lod-fix.json'; node scripts\replacer-live-control-probe.cjs`
+
+Test result:
+
+- Targeted unit tests: `30` passed.
+- Typecheck: passed.
+- Live Replacer probe completed against `http://127.0.0.1:5274/`.
+
+Live Replacer D20 result:
+
+| Scenario | Frame avg | Frame p95 | `drawConnections()` | Warning |
+| --- | ---: | ---: | ---: | --- |
+| Far pan `0.12` | 17.3 ms | 16.8 ms | 31.1 ms / 39 calls | None |
+| Middle pan `0.35` | 21.8 ms | 33.4 ms | 128.3 ms / 40 calls | None |
+| Close pan `0.65` | 28.4 ms | 33.4 ms | 141.4 ms / 43 calls | None |
+| Wheel zoom in | 27.3 ms | 50.0 ms | 217.2 ms / 33 calls | None |
+| Wheel zoom out | 26.5 ms | 66.7 ms | 356.6 ms / 53 calls | `p95 frame duration 66.7ms` |
+
+Interpretation:
+
+- The requested visual consistency fix is covered by unit tests and did not introduce pan warnings in the live probe.
+- The remaining performance block is still wheel zoom crossing between DOM and far-canvas modes, especially zoom-out. D20 confirms this with a `66.7 ms` p95 warning and high `drawConnections()` total during zoom-out.

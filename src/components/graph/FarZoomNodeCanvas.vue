@@ -45,7 +45,8 @@ function toSnapshotNode(node: LGraphNode): PanSnapshotNode | null {
     bgcolor: node.bgcolor,
     collapsed: node.flags?.collapsed,
     selected: node.selected,
-    executing: Boolean(node.graph?.nodes_executing?.[Number(node.id)])
+    executing: Boolean(node.graph?.nodes_executing?.[Number(node.id)]),
+    hasErrors: node.has_errors
   }
 }
 
