@@ -15,6 +15,7 @@
         :node-id="nodeData?.id != null ? String(nodeData.id) : ''"
         :has-error="inputHasError(input)"
         :index="getActualInputIndex(input, index)"
+        :dot-only="dotOnly"
       />
     </div>
 
@@ -29,6 +30,7 @@
         :node-type="nodeData?.type || ''"
         :node-id="nodeData?.id != null ? String(nodeData.id) : ''"
         :index="index"
+        :dot-only="dotOnly"
       />
     </div>
   </div>
@@ -55,9 +57,14 @@ import OutputSlot from './OutputSlot.vue'
 interface NodeSlotsProps {
   nodeData: VueNodeData
   unified?: boolean
+  dotOnly?: boolean
 }
 
-const { nodeData, unified = false } = defineProps<NodeSlotsProps>()
+const {
+  nodeData,
+  unified = false,
+  dotOnly = false
+} = defineProps<NodeSlotsProps>()
 const executionErrorStore = useExecutionErrorStore()
 const nodeLocatorId = computed(() => getLocatorIdFromNodeData(nodeData))
 

@@ -325,6 +325,13 @@ async function getGraphInfo(page) {
   return page.evaluate(() => ({
     nodes: window.app?.graph?._nodes?.length ?? 0,
     mounted: document.querySelectorAll('[data-node-id]').length,
+    lowDetailNodes: document.querySelectorAll('[data-low-detail]').length,
+    lowDetailSlotAreas: document.querySelectorAll(
+      '[data-low-detail] [data-testid="node-low-detail-slots"]'
+    ).length,
+    lowDetailSlotDots: document.querySelectorAll(
+      '[data-low-detail] [data-testid="node-low-detail-slots"] [data-testid="slot-dot"]'
+    ).length,
     farZoomCanvas: Boolean(
       document.querySelector('[data-testid="far-zoom-node-canvas"]')
     ),
@@ -473,6 +480,15 @@ async function main() {
     ]) {
       await focusGraph(page, scenario.scale, targetNodeId)
       const before = await getGraphInfo(page)
+      if (
+        scenario.label === 'pan:middle' &&
+        before.mounted > 0 &&
+        before.lowDetailSlotDots === 0
+      ) {
+        warnings.push(
+          'pan:middle: low-detail connection slot dots were not mounted'
+        )
+      }
       const result = await measureScenario(page, scenario.label, () =>
         panInteraction(page)
       )

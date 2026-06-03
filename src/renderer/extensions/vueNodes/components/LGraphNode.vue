@@ -79,7 +79,7 @@
       data-testid="node-inner-wrapper"
       :class="
         cn(
-          'flex flex-1 flex-col border border-solid border-transparent bg-node-component-header-surface',
+          'relative flex flex-1 flex-col border border-solid border-transparent bg-node-component-header-surface',
           'w-(--node-width)',
           !isRerouteNode && 'min-w-(--min-node-width)',
           shapeClass,
@@ -129,6 +129,13 @@
         <span class="block min-w-0 truncate">
           {{ nodeData.title }}
         </span>
+      </div>
+      <div
+        v-if="lowDetail && canRenderLowDetailSlots"
+        data-testid="node-low-detail-slots"
+        class="pointer-events-auto absolute inset-x-0 top-7 bottom-0 flex items-center"
+      >
+        <NodeSlots :node-data="nodeData" dot-only />
       </div>
 
       <div
@@ -471,6 +478,12 @@ const nodeOpacity = computed(() => {
 
 const hasInputs = computed(() => nonWidgetedInputs(nodeData).length > 0)
 const hasOutputs = computed((): boolean => !!nodeData.outputs?.length)
+const canRenderLowDetailSlots = computed(
+  () =>
+    !isCollapsed.value &&
+    !isRerouteNode.value &&
+    (hasInputs.value || hasOutputs.value)
+)
 
 // Use canvas interactions for proper wheel event handling and pointer event capture control
 const { handleWheel, shouldHandleNodePointerEvents } = useCanvasInteractions()

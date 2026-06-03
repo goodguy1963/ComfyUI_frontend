@@ -60,6 +60,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D15 | Evaluate optional Rust/WASM geometry kernel after worker boundary exists. | Complete: no-op | No worker boundary exists yet; WASM is premature. |
 | D16 | Add active-pan middle/close link rendering LOD. | Complete | Middle/close active-pan links use direct transient segments and approximate slot positions. |
 | D17 | Add live Replacer pan/zoom control probe and stabilize render-mode switching. | Complete | Wheel zoom no longer activates active-pan LOD; far-canvas mode uses hysteresis. |
+| D18 | Keep low-detail/middle zoom connection slots mounted. | Complete | Low-detail nodes render dot-only slots so new links can still be created. |
 
 ## Commit Policy
 
@@ -999,3 +1000,33 @@ Interpretation:
 - The springy visual switching should be reduced because wheel zoom no longer hides/restores node internals at `0.35` and `0.65`.
 - Panning still uses active LOD during the drag and returns to full detail after release.
 - Remaining live pan cost is still mostly link/canvas work and viewport mount count changes, not repeated mode switching during wheel zoom.
+
+### D18 Low-Detail Connection Slot Availability
+
+Problem:
+
+- Low-detail Vue nodes kept the cheap title strip but removed `NodeSlots`.
+- That preserved performance and readability, but it also removed the DOM hit targets needed to start or finish new connections at middle zoom.
+
+Changes:
+
+- `NodeSlots` now accepts `dotOnly`.
+- Low-detail nodes render a lightweight absolute slot layer with dot-only inputs/outputs.
+- Widgets, previews, badges, and other heavy internals remain pruned.
+- Slot element tracking remains active because the real slot dot components stay mounted.
+- The live control probe now reports low-detail slot areas and slot-dot counts.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src\renderer\extensions\vueNodes\components\LGraphNode.test.ts src\renderer\extensions\vueNodes\components\NodeSlots.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; $env:REPLACER_LIVE_CONTROL_OUT='output_sessions\replacer-live-control-low-detail-slots.json'; node scripts\replacer-live-control-probe.cjs`
+
+Live control signal:
+
+- The follow-up Replacer live probe completed with no warnings.
+- At middle zoom before pan, the probe saw `178` low-detail nodes, `161` low-detail slot areas, and `374` low-detail slot dots.
+- After middle pan, it still saw `54` low-detail nodes, `51` low-detail slot areas, and `118` low-detail slot dots.
+- Middle zoom still entered `dom:middle` only during pan.
+- Wheel zoom still had `activePanDuringWheelSampleCount: 0`.
+- The probe now has explicit fields for `lowDetailNodes`, `lowDetailSlotAreas`, and `lowDetailSlotDots` so future runs can catch connection-target regressions.

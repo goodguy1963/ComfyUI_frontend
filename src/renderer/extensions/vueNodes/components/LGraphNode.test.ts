@@ -512,6 +512,22 @@ describe('LGraphNode', () => {
           ...mockNodeData,
           color: '#000000',
           bgcolor: '#000000',
+          inputs: [
+            {
+              name: 'image',
+              type: 'IMAGE',
+              link: null,
+              boundingRect: [0, 0, 0, 0]
+            }
+          ],
+          outputs: [
+            {
+              name: 'image',
+              type: 'IMAGE',
+              links: null,
+              boundingRect: [0, 0, 0, 0]
+            }
+          ],
           widgets: [{ name: 'strength', type: 'number' }]
         }
       },
@@ -538,7 +554,8 @@ describe('LGraphNode', () => {
       'overflow-hidden'
     )
     expect(screen.queryByTestId('node-header-stub')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('node-slots-stub')).not.toBeInTheDocument()
+    expect(screen.getByTestId('node-low-detail-slots')).toBeInTheDocument()
+    expect(screen.getByTestId('node-slots-stub')).toBeInTheDocument()
     expect(screen.queryByTestId('node-widgets-stub')).not.toBeInTheDocument()
   })
 
