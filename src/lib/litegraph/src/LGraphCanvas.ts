@@ -84,7 +84,7 @@ import {
   snapPoint
 } from './measure'
 
-const VUE_NODES_LOW_DETAIL_PAN_LINK_SCALE = 0.12
+const VUE_NODES_FAR_ZOOM_PAN_LINK_SCALE = 0.18
 import { NodeInputSlot } from './node/NodeInputSlot'
 import type { Subgraph } from './subgraph/Subgraph'
 import { topologicalSortSubgraphs } from './subgraph/subgraphDeduplication'
@@ -6033,8 +6033,7 @@ export class LGraphCanvas implements CustomEventDispatcher<LGraphCanvasEventMap>
       LiteGraph.vueNodesMode &&
       this.dragging_canvas &&
       this.pointer.isDown &&
-      this.pointer.eDown?.button === 1 &&
-      this.ds.scale <= VUE_NODES_LOW_DETAIL_PAN_LINK_SCALE
+      this.ds.scale <= VUE_NODES_FAR_ZOOM_PAN_LINK_SCALE
     ) {
       this._visibleReroutes.clear()
       return

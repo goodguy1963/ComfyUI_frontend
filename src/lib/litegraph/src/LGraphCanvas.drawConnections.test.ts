@@ -204,4 +204,31 @@ describe('drawConnections widget-input slot positioning', () => {
     const offset = LiteGraph.NODE_SLOT_HEIGHT * 0.5
     expect(input.pos![1]).toBe(widget.y + offset)
   })
+
+  it('skips link traversal during far-zoom Vue canvas pan', () => {
+    const sourceNode = new LGraphNode('Source')
+    sourceNode.pos = [0, 100]
+    sourceNode.size = [150, 60]
+    sourceNode.addOutput('out', 'STRING')
+    graph.add(sourceNode)
+
+    const targetNode = new LGraphNode('Target')
+    targetNode.pos = [300, 100]
+    targetNode.size = [200, 120]
+    targetNode.addInput('input', 'STRING')
+    graph.add(targetNode)
+
+    createTestLink(graph, sourceNode, 0, targetNode, 0)
+    const getNodeByIdSpy = vi.spyOn(graph, 'getNodeById')
+
+    LiteGraph.vueNodesMode = true
+    canvas.dragging_canvas = true
+    canvas.pointer.isDown = true
+    canvas.pointer.eDown = { button: 0 } as never
+    canvas.ds.scale = 0.12
+
+    canvas.drawConnections(createMockCtx())
+
+    expect(getNodeByIdSpy).not.toHaveBeenCalled()
+  })
 })

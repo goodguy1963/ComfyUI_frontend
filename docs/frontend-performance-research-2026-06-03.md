@@ -51,7 +51,7 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D6 | Add velocity-aware viewport overscan/hysteresis tuning. | Complete | Enter overscan now expands with canvas transform velocity and keeps exit overscan stable. |
 | D7 | Rewrite `useGraphNodeManager` hot load path toward patch/incremental extraction. | Complete | Removed slot-label full widget re-extraction; remaining full extraction work needs deeper load instrumentation. |
 | D8 | Make `useLayoutSync` dirty/flush behavior more granular. | Complete | Canvas-originated layout changes now skip LiteGraph writeback scheduling. |
-| D9 | Profile and implement next confirmed link drawing optimization. | Pending | No speculative link work without a profile. |
+| D9 | Profile and implement next confirmed link drawing optimization. | Complete | Attribution confirmed far-zoom `drawConnections()` cost; far-zoom active pan now skips full link traversal. |
 | D10 | Move minimap model toward event-driven updates. | Pending | Earlier pan skip helped; full event model remains. |
 | D11 | Add widget intrinsic sizing/cache API. | Pending | Correctness plus layout churn reduction. |
 | D12 | Continue queue/output/execution store selectorization. | Pending | Prior partial improvements exist; not complete. |
@@ -660,3 +660,70 @@ Interpretation:
 - Startup/load stayed effectively unchanged.
 - Middle and close pan improved in this sample; far pan and far wheel worsened.
 - The next step should use attribution again before making more link/minimap changes.
+
+### D9 Far-Zoom Link Traversal Skip
+
+Measurement tooling:
+
+- Added `scripts/replacer-render-attribution.cjs` for direct browser attribution against the running `5274` frontend and `8190` backend.
+- Added `scripts/replacer-probe-stats.cjs` to summarize repeated latency probe samples by min, median, p95, and max.
+
+Pre-change attribution:
+
+| Scenario | `drawConnections()` calls | `drawConnections()` total | Minimap canvas total |
+| --- | ---: | ---: | ---: |
+| Far pan | 26 | 292.8 ms | 2.2 ms |
+| Middle pan | 27 | 134.9 ms | 1.2 ms |
+| Close pan | 26 | 83.9 ms | 1.4 ms |
+
+Decision:
+
+- D9 was justified: link drawing was the confirmed hot path.
+- Minimap was not changed because measured minimap canvas time was only about `1-2 ms` in the same pan windows.
+
+Changes:
+
+- Far-zoom Vue-node canvas pan now skips full link traversal for any active canvas pan, not only middle-button pan.
+- The threshold is aligned with far-zoom canvas mode (`0.18`).
+- Middle and close zoom link rendering remains unchanged.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src\lib\litegraph\src\LGraphCanvas.drawConnections.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; $env:REPLACER_RENDER_ATTRIBUTION_OUT='output_sessions\d9-far-pan-link-skip-render-attribution.json'; node scripts\replacer-render-attribution.cjs`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; for ($i=1; $i -le 3; $i++) { node output_sessions\replacer_input_latency_probe.cjs > "output_sessions\d9-far-link-skip-latency-$i.json" }`
+- `node scripts\replacer-probe-stats.cjs output_sessions\d9-far-link-skip-latency-*.json`
+
+Post-change attribution:
+
+| Scenario | `drawConnections()` calls | `drawConnections()` total | Minimap canvas total |
+| --- | ---: | ---: | ---: |
+| Far pan | 26 | 9.1 ms | 1.7 ms |
+| Middle pan | 26 | 124.0 ms | 1.2 ms |
+| Close pan | 26 | 88.8 ms | 2.2 ms |
+
+Repeated D9 latency samples:
+
+Samples: `3/3` valid Replacer graphs.
+
+| Metric | n | min | median | p95 | max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| App ready | 3 | 3465 | 3551 | 3817 | 3817 |
+| Workflow load | 3 | 8360 | 8389 | 8420 | 8420 |
+| Probe total | 3 | 15768 | 15913 | 16131 | 16131 |
+| Far mounted nodes | 3 | 0 | 0 | 0 | 0 |
+| Far pan | 3 | 49.8 | 64.5 | 66.9 | 66.9 |
+| Far wheel | 3 | 31.0 | 33.2 | 34.0 | 34.0 |
+| Middle mounted nodes | 3 | 73 | 73 | 73 | 73 |
+| Middle pan | 3 | 43.7 | 43.8 | 48.7 | 48.7 |
+| Middle wheel | 3 | 35.6 | 36.1 | 40.7 | 40.7 |
+| Close mounted nodes | 3 | 29 | 29 | 29 | 29 |
+| Close pan | 3 | 30.7 | 37.3 | 39.9 | 39.9 |
+| Close wheel | 3 | 40.1 | 42.3 | 46.2 | 46.2 |
+
+Interpretation:
+
+- The targeted rendering cost is fixed: far-zoom `drawConnections()` dropped from `292.8 ms` to `9.1 ms` in the attribution pan window.
+- The synthetic action-to-paint far-pan latency did not improve in the repeated latency probe; it remains noisy and likely measures more than link drawing.
+- Middle/close link rendering remains the next possible link target, but it should not be changed blindly. The remaining D9 follow-up would be a separate medium/close link-level simplification if user-visible IRL testing still reports lag there.
