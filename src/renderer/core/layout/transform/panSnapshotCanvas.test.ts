@@ -20,6 +20,8 @@ function createMockCanvasContext() {
     lineTo: vi.fn(),
     arcTo: vi.fn(),
     closePath: vi.fn(),
+    fillRect: vi.fn(),
+    strokeRect: vi.fn(),
     fill: vi.fn(),
     stroke: vi.fn(),
     fillText: vi.fn(),
@@ -137,6 +139,9 @@ describe('panSnapshotCanvas', () => {
     drawPanSnapshot(ctx, [node], { width: 300, height: 200 }, 1)
 
     expect(ctx.fillText).not.toHaveBeenCalled()
+    expect(ctx.fillRect).toHaveBeenCalled()
+    expect(ctx.strokeRect).toHaveBeenCalled()
+    expect(ctx.beginPath).not.toHaveBeenCalled()
   })
 
   it('draws title text when snapshot title is enabled', () => {

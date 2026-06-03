@@ -257,6 +257,22 @@ export function drawPanSnapshot(
   ctx.textBaseline = 'middle'
 
   for (const node of drawNodes) {
+    if (!node.showTitle) {
+      ctx.fillStyle = node.bodyFill
+      ctx.globalAlpha = 0.92
+      ctx.fillRect(node.x, node.y, node.width, node.height)
+
+      ctx.fillStyle = node.headerFill
+      ctx.globalAlpha = 0.98
+      ctx.fillRect(node.x, node.y, node.width, node.titleHeight)
+
+      ctx.globalAlpha = 1
+      ctx.lineWidth = 1
+      ctx.strokeStyle = node.stroke
+      ctx.strokeRect(node.x, node.y, node.width, node.height)
+      continue
+    }
+
     drawRoundedRect(ctx, node.x, node.y, node.width, node.height, node.radius)
     ctx.fillStyle = node.bodyFill
     ctx.globalAlpha = 0.92

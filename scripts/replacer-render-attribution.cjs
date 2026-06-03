@@ -70,6 +70,9 @@ async function installAttribution(page) {
       minimapCanvasCalls: 0,
       minimapCanvasMs: 0,
       minimapCanvasMethods: {},
+      farZoomCanvasCalls: 0,
+      farZoomCanvasMs: 0,
+      farZoomCanvasMethods: {},
       frameSamples: 0,
       mountedSamples: []
     })
@@ -94,7 +97,13 @@ async function installAttribution(page) {
       win.__replacerRenderOriginalGetContext = HTMLCanvasElement.prototype.getContext
       HTMLCanvasElement.prototype.getContext = function (...args) {
         const ctx = win.__replacerRenderOriginalGetContext.apply(this, args)
-        if (!ctx || this.dataset?.testid !== 'minimap-canvas') return ctx
+        const canvasKind =
+          this.dataset?.testid === 'minimap-canvas'
+            ? 'minimap'
+            : this.dataset?.testid === 'far-zoom-node-canvas'
+              ? 'farZoom'
+              : null
+        if (!ctx || !canvasKind) return ctx
         if (ctx.__replacerRenderAttributionWrapped) return ctx
 
         const methods = [
@@ -125,9 +134,16 @@ async function installAttribution(page) {
             try {
               return original.apply(this, methodArgs)
             } finally {
-              counters.minimapCanvasCalls++
-              counters.minimapCanvasMs += performance.now() - startedAt
-              increment(counters.minimapCanvasMethods, method)
+              const elapsed = performance.now() - startedAt
+              if (canvasKind === 'minimap') {
+                counters.minimapCanvasCalls++
+                counters.minimapCanvasMs += elapsed
+                increment(counters.minimapCanvasMethods, method)
+              } else {
+                counters.farZoomCanvasCalls++
+                counters.farZoomCanvasMs += elapsed
+                increment(counters.farZoomCanvasMethods, method)
+              }
             }
           }
         }
@@ -218,6 +234,9 @@ async function installAttribution(page) {
           ? mounted.reduce((sum, value) => sum + value, 0) / mounted.length
           : 0,
         minimapCanvasMethods: Object.entries(counters.minimapCanvasMethods)
+          .sort((a, b) => b[1] - a[1])
+          .map(([key, count]) => ({ key, count })),
+        farZoomCanvasMethods: Object.entries(counters.farZoomCanvasMethods)
           .sort((a, b) => b[1] - a[1])
           .map(([key, count]) => ({ key, count }))
       }

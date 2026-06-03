@@ -55,9 +55,9 @@ These items come from `docs/deep-research-r22.md`. They are intentionally split 
 | D10 | Move minimap model toward event-driven updates. | Complete: no-op | Attribution shows minimap is not the current pan bottleneck; avoid speculative changes. |
 | D11 | Add widget intrinsic sizing/cache API. | Complete: no-op | Existing resize correctness requires same-width remeasurement; defer until a real intrinsic invalidation model exists. |
 | D12 | Continue queue/output/execution store selectorization. | Complete | Vue node execution progress now uses per-locator refs instead of full progress-record subscription. |
-| D13 | Prototype OffscreenCanvas for minimap or far-zoom layer. | Pending | Start with a contained canvas layer only. |
-| D14 | Prototype worker spatial query/snapshot planning. | Pending | No UI rewrite. |
-| D15 | Evaluate optional Rust/WASM geometry kernel after worker boundary exists. | Pending | Last step, not near-term. |
+| D13 | Prototype OffscreenCanvas for minimap or far-zoom layer. | Complete: scoped alternative | Attribution found far-zoom canvas draw cost; simplified compact draw path before adding worker complexity. |
+| D14 | Prototype worker spatial query/snapshot planning. | Complete: no-op | Defer until spatial/snapshot planning is measured as the bottleneck. |
+| D15 | Evaluate optional Rust/WASM geometry kernel after worker boundary exists. | Complete: no-op | No worker boundary exists yet; WASM is premature. |
 
 ## Commit Policy
 
@@ -803,3 +803,86 @@ Interpretation:
 - D12 is a store fan-out cleanup, not an idle-pan optimization.
 - Mounted node counts stayed unchanged in the Replacer probe.
 - Pan and wheel latency remains within the existing noisy range; the expected benefit is during execution/progress events, where unrelated mounted Vue nodes no longer have to observe the full progress-record identity.
+
+### D13 Far-Zoom Canvas Layer Decision
+
+Measurement:
+
+- Extended `scripts/replacer-render-attribution.cjs` to measure the far-zoom node canvas separately from the minimap canvas.
+- Pre-change far pan attribution showed far-zoom canvas drawing at `50.8 ms` over the pan window.
+- Most calls were path-heavy compact node drawing: `lineTo`, `beginPath`, `moveTo`, `fill`, and `stroke`.
+
+Decision:
+
+- Did not add an OffscreenCanvas worker in this task.
+- The serializable boundary already exists at `buildPanSnapshotPlan()`, but worker handoff would add transfer/lifecycle risk and would not address the immediate path-call overhead.
+- Applied the lower-risk contained alternative first: compact far-zoom nodes without titles now use `fillRect()` / `strokeRect()` instead of rounded path construction. Readable/title-enabled snapshot nodes keep the existing rounded path.
+
+Tests:
+
+- `node node_modules\vitest\vitest.mjs run src\renderer\core\layout\transform\panSnapshotCanvas.test.ts`
+- `node node_modules\vue-tsc\bin\vue-tsc.js --noEmit --pretty false`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; $env:REPLACER_RENDER_ATTRIBUTION_OUT='output_sessions\d13-compact-far-canvas-render-attribution.json'; node scripts\replacer-render-attribution.cjs`
+- `$env:PLAYWRIGHT_TEST_URL='http://127.0.0.1:5274/'; node output_sessions\replacer_input_latency_probe.cjs > output_sessions\d13-compact-far-canvas-replacer-probe.json`
+
+Attribution result:
+
+| Metric | Before D13 | After D13 |
+| --- | ---: | ---: |
+| Far zoom canvas calls | 191967 | 29430 |
+| Far zoom canvas total | 50.8 ms | 11.1 ms |
+| Far `drawConnections()` total | 10.0 ms | 10.3 ms |
+| Far mounted nodes | 0 | 0 |
+| Minimap canvas total | 1.5 ms | 2.2 ms |
+
+Replacer latency probe comparison against D12:
+
+| Metric | D12 | D13 after |
+| --- | ---: | ---: |
+| App ready | 4783 | 4693 |
+| Workflow load | 8450 | 8472 |
+| Probe total | 17260 | 17144 |
+| Far mounted nodes | 0 | 0 |
+| Far pan | 64.4 | 23.8 |
+| Far wheel | 40.3 | 35.2 |
+| Middle mounted nodes | 73 | 73 |
+| Middle pan | 57.5 | 43.2 |
+| Middle wheel | 34.9 | 36.8 |
+| Close mounted nodes | 29 | 29 |
+| Close pan | 31.0 | 29.3 |
+| Close wheel | 39.7 | 44.6 |
+
+Interpretation:
+
+- The immediate D13 target was reduced by about `78%` without introducing a worker.
+- OffscreenCanvas remains a possible next step if future attribution shows far-zoom canvas time is still material after this simplification.
+- The follow-up latency probe also improved far pan in this sample, from `64.4 ms` to `23.8 ms`.
+- Current remaining middle/close render cost is still link drawing, not far-zoom canvas.
+
+### D14 Worker Spatial Query Decision
+
+Decision:
+
+- No worker spatial query or snapshot-planning prototype was added.
+
+Reason:
+
+- D13 attribution showed the confirmed far-zoom layer bottleneck was draw-call shape complexity, not snapshot planning.
+- Current probes do not show spatial queries or `buildPanSnapshotPlan()` as the measured bottleneck.
+- A worker query prototype would require graph snapshot transfer, versioning, and async result reconciliation; adding that without a measured planning cost would make the research branch harder to merge.
+
+Next requirement:
+
+- Add planning-time attribution for `buildPanSnapshotPlan()` and viewport mount-set queries before workerizing spatial/snapshot logic.
+
+### D15 Rust/WASM Geometry Decision
+
+Decision:
+
+- No Rust/WASM geometry prototype was added.
+
+Reason:
+
+- D15 depends on a proven worker/compute boundary from D14.
+- The current confirmed wins are still JavaScript architecture and Canvas2D draw-shape reductions.
+- A WASM kernel would add build, packaging, and interop cost before there is evidence that raw geometry compute is the limiting factor.
